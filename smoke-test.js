@@ -197,8 +197,9 @@ async function runSmoke() {
       tableNode.rows[0][1] = 'usa **fuerte** y `cod`';
       api.renderAll();
       const sel = `g.node[data-id="${tableNode.id}"]`;
-      const boldSpan = document.querySelector(`${sel} text tspan[font-weight="700"]`);
-      ok('markdown: **negrita** renderiza en bold', !!boldSpan && boldSpan.textContent === 'fuerte');
+      const boldSpan = [...document.querySelectorAll(`${sel} text tspan[font-weight="700"]`)]
+        .find((s) => s.textContent === 'fuerte');
+      ok('markdown: **negrita** renderiza en bold', !!boldSpan);
       ok('markdown: `código` tiene fondo', !!document.querySelector(`${sel} rect[rx="4"]`));
       const cellText = [...document.querySelectorAll(`${sel} text`)]
         .map((t) => t.textContent).join(' ');
@@ -231,29 +232,98 @@ async function runSmoke() {
     const str = new XMLSerializer().serializeToString(exp.svg);
     ok('SVG serializa con xmlns', str.startsWith('<svg') && str.includes('http://www.w3.org/2000/svg'));
 
-    // --- persistencia y auto-layout ---
-    setTimeout(() => {
-      const saved = JSON.parse(localStorage.getItem('diagramb.v1'));
-      const cur = saved && saved.docs[saved.current];
-      ok('localStorage guarda el diagrama', !!cur && cur.nodes.length === api.doc.nodes.length);
+    // --- línea de tiempo ---
+    const prevDocId = api.doc.id;
+    document.getElementById('docNew').click();
+    ok('popup de nuevo documento aparece', !document.getElementById('newDocPopup').hidden);
+    document.getElementById('newTimeline').click();
+    ok('nuevo timeline con hitos de ejemplo',
+      api.doc.type === 'timeline' && api.doc.nodes.length === 3);
+    const [t0, t1, t2] = api.doc.nodes;
+    ok('los hitos alternan arriba y abajo', t0.y < 0 && t1.y > 0 && t2.y < 0);
+    ok('los hitos avanzan de izquierda a derecha', t0.x < t1.x && t1.x < t2.x);
+    ok('sin puertos de conexión en los hitos',
+      document.querySelectorAll('g.node .port').length === 0);
+    ok('el eje y los conectores se dibujan',
+      document.querySelectorAll('#edgesG line').length >= 4);
+    ok('un punto sobre el eje por hito',
+      document.querySelectorAll('#edgesG circle').length === 3);
+    const expTl = api.buildExportSvg();
+    ok('la exportación del timeline incluye el eje',
+      !!expTl && expTl.svg.querySelectorAll('circle').length >= 3);
 
-      document.getElementById('autoLayout').click();
+    // arrastrar el primer hito más allá del último lo manda al final
+    const tRect = document.querySelector(`g.node[data-id="${t0.id}"] rect`);
+    const [tx0, ty0] = toClient(t0.x + 30, t0.y + 20);
+    const [tx1] = toClient(t2.x + 400, 0);
+    pe('pointerdown', tRect, tx0, ty0);
+    pe('pointermove', canvas, tx1, ty0);
+    pe('pointerup', canvas, tx1, ty0);
+    ok('arrastrar un hito lo reordena', api.doc.nodes.indexOf(t0) === 2);
+
+    // --- timeline: teclado, vuelta al flujo, persistencia y auto-layout ---
+    setTimeout(() => {
+      // ← lo mueve una posición antes en la secuencia (sigue seleccionado)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+      ok('flecha izquierda mueve el hito antes', api.doc.nodes.indexOf(t0) === 1);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      ok('flecha abajo fuerza el lado inferior', t0.side === 'down' && t0.y > 0);
+
+      // arrastrar una tarjeta por debajo del eje la cambia de lado
+      const tRect2 = document.querySelector(`g.node[data-id="${t2.id}"] rect`);
+      const [ux0, uy0] = toClient(t2.x + 30, t2.y + 20);
+      const [ux1, uy1] = toClient(t2.x + 30, 140);
+      pe('pointerdown', tRect2, ux0, uy0);
+      pe('pointermove', canvas, ux1, uy1);
+      pe('pointerup', canvas, ux1, uy1);
+      ok('arrastrar bajo el eje cambia el lado', t2.side === 'down' && t2.y > 0);
+
+      // el control de lado en selección múltiple manda todos al mismo lado
+      let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+      for (const m of api.doc.nodes) {
+        bx0 = Math.min(bx0, m.x); by0 = Math.min(by0, m.y);
+        bx1 = Math.max(bx1, m.x + 400); by1 = Math.max(by1, m.y + 150);
+      }
+      const [r0x, r0y] = toClient(bx0 - 20, by0 - 20);
+      const [r1x, r1y] = toClient(bx1 + 20, by1 + 20);
+      pe('pointerdown', canvas, r0x, r0y, { shiftKey: true });
+      pe('pointermove', canvas, r1x, r1y, { shiftKey: true });
+      pe('pointerup', canvas, r1x, r1y, { shiftKey: true });
+      ok('marquee selecciona los hitos', api.selection && api.selection.ids.length === 3);
+      ok('control de lado visible en selección múltiple',
+        !document.getElementById('pSideFieldMulti').hidden);
+      document.querySelector('#pSideMulti button[data-k="up"]').click();
+      ok('lado múltiple: todos arriba',
+        api.doc.nodes.every((m) => m.side === 'up' && m.y < 0));
+
+      const sel2 = document.getElementById('docSelect');
+      sel2.value = prevDocId;
+      sel2.dispatchEvent(new Event('change', { bubbles: true }));
+      ok('volver al diagrama de flujo', api.doc.id === prevDocId && api.doc.type !== 'timeline');
+
       setTimeout(() => {
-        const wrong = api.doc.edges.filter((e) => {
-          const f = api.doc.nodes.find((m) => m.id === e.from);
-          const t = api.doc.nodes.find((m) => m.id === e.to);
-          return f && t && t.y <= f.y;
-        });
-        ok('auto-layout: las flechas apuntan hacia abajo', wrong.length === 0);
-        const overlap = api.doc.nodes.some((m1) => api.doc.nodes.some((m2) => {
-          if (m1.id >= m2.id) return false;
-          const s1 = api.sizes[m1.id], s2 = api.sizes[m2.id];
-          return m1.x < m2.x + s2.w && m2.x < m1.x + s1.w &&
-                 m1.y < m2.y + s2.h && m2.y < m1.y + s1.h;
-        }));
-        ok('auto-layout: sin nodos encimados', !overlap);
-        report(out);
-      }, 800);
+        const saved = JSON.parse(localStorage.getItem('diagramb.v1'));
+        const cur = saved && saved.docs[saved.current];
+        ok('localStorage guarda el diagrama', !!cur && cur.nodes.length === api.doc.nodes.length);
+
+        document.getElementById('autoLayout').click();
+        setTimeout(() => {
+          const wrong = api.doc.edges.filter((e) => {
+            const f = api.doc.nodes.find((m) => m.id === e.from);
+            const t = api.doc.nodes.find((m) => m.id === e.to);
+            return f && t && t.y <= f.y;
+          });
+          ok('auto-layout: las flechas apuntan hacia abajo', wrong.length === 0);
+          const overlap = api.doc.nodes.some((m1) => api.doc.nodes.some((m2) => {
+            if (m1.id >= m2.id) return false;
+            const s1 = api.sizes[m1.id], s2 = api.sizes[m2.id];
+            return m1.x < m2.x + s2.w && m2.x < m1.x + s1.w &&
+                   m1.y < m2.y + s2.h && m2.y < m1.y + s1.h;
+          }));
+          ok('auto-layout: sin nodos encimados', !overlap);
+          report(out);
+        }, 800);
+      }, 250);
     }, 400);
   } catch (err) {
     out.push('ERROR ' + err.message + ' @ ' + (err.stack || '').split('\n')[1]);

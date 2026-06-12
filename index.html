@@ -60,6 +60,7 @@
     <label class="field"><span>Subtítulo</span><input id="pSub" type="text" spellcheck="false"></label>
     <label class="field"><span>Nota</span><textarea id="pNote" rows="3" spellcheck="false" placeholder="Nota flotante junto a la tarjeta…"></textarea></label>
     <div class="field"><span>Color</span><div id="pColors" class="swatches"></div></div>
+    <div class="field" id="pSideField" hidden><span>Lado</span><div id="pSide" class="seg"></div></div>
     <div class="field">
       <span>Tabla</span>
       <div id="pRows"></div>
@@ -72,8 +73,9 @@
   </div>
   <div id="panelMulti" hidden>
     <div class="field"><span id="pMultiCount">nodos seleccionados</span><div id="pColorsMulti" class="swatches"></div></div>
-    <div class="field"><span>Alinear</span><div id="pAlign" class="edge-controls"></div></div>
-    <div class="field"><span>Distribuir</span><div id="pDistribute" class="seg"></div></div>
+    <div class="field" id="pSideFieldMulti" hidden><span>Lado</span><div id="pSideMulti" class="seg"></div></div>
+    <div class="field" id="pAlignField"><span>Alinear</span><div id="pAlign" class="edge-controls"></div></div>
+    <div class="field" id="pDistField"><span>Distribuir</span><div id="pDistribute" class="seg"></div></div>
     <div class="panel-actions">
       <button id="pDeleteMulti" class="btn tiny danger">Eliminar selección</button>
     </div>
@@ -90,6 +92,11 @@
 <div id="edgePopup" hidden>
   <div class="field"><span>Tipo de flecha</span><div id="popupEdgeControls"></div></div>
   <button id="popupDone" class="btn tiny">Listo</button>
+</div>
+
+<div id="newDocPopup" hidden>
+  <button id="newFlow" class="btn">Diagrama de flujo</button>
+  <button id="newTimeline" class="btn">Línea de tiempo</button>
 </div>
 
 <div id="zoombar">

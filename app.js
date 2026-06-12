@@ -167,11 +167,13 @@ const doc = () => store.docs[store.current];
 const view = () => doc().view;
 const getNode = (id) => doc().nodes.find((n) => n.id === id);
 const getEdge = (id) => doc().edges.find((e) => e.id === id);
+const isTimeline = () => doc().type === 'timeline';
 
-function newDoc(name) {
+function newDoc(name, type) {
   return {
     id: uid(),
     name,
+    type: type || 'flow',
     nodes: [],
     edges: [],
     view: { x: 0, y: 0, z: 1 },
@@ -206,6 +208,17 @@ function seedDoc() {
   link(e, g, 'migrada');
   link(f, h);
   link(g, h);
+  return d;
+}
+
+// Timeline nuevo con hitos de ejemplo: el orden del arreglo es la secuencia.
+function seedTimeline(name) {
+  const d = newDoc(name, 'timeline');
+  const mk = (title, subtitle, color) =>
+    d.nodes.push({ id: uid(), x: 0, y: 0, title, subtitle, color, rows: [] });
+  mk('Antes', 'cómo era', 'slate');
+  mk('El cambio', 'qué pasó', 'indigo');
+  mk('Después', 'cómo quedó', 'teal');
   return d;
 }
 
@@ -380,6 +393,73 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
   };
 }
 
+/* ============================== línea de tiempo ============================== */
+
+const TL_STEM = 56;      // distancia entre la tarjeta y el eje
+const TL_DOT_GAP = 110;  // separación mínima entre puntos sobre el eje
+const TL_CARD_GAP = 36;  // separación mínima entre tarjetas del mismo lado
+
+let tlInfo = null;    // { cx, sides, x0, x1 } del último layout
+let tlDragId = null;  // hito en arrastre: el layout no le toca la posición
+
+// Coloca los hitos sobre el eje horizontal (y = 0) en el orden del arreglo,
+// alternando arriba/abajo salvo que el hito tenga un lado forzado.
+function layoutTimeline() {
+  tlInfo = null;
+  const ns = doc().nodes;
+  if (!ns.length) return;
+  const cx = {};
+  const sides = {};
+  const busyRight = { up: -Infinity, down: -Infinity }; // borde derecho ocupado por lado
+  let prev = null;
+  ns.forEach((n, i) => {
+    const s = sizes[n.id];
+    const side = n.side === 'up' || n.side === 'down' ? n.side : (i % 2 ? 'down' : 'up');
+    const effW = s.w + (s.note ? NOTE_GAP + s.note.w : 0);
+    let c = prev === null ? 0 : prev + TL_DOT_GAP;
+    c = Math.max(c, busyRight[side] + TL_CARD_GAP + s.w / 2);
+    cx[n.id] = c;
+    sides[n.id] = side;
+    busyRight[side] = c - s.w / 2 + effW;
+    prev = c;
+    if (n.id !== tlDragId) {
+      n.x = Math.round(c - s.w / 2);
+      n.y = side === 'up' ? -TL_STEM - s.h : TL_STEM;
+    }
+  });
+  tlInfo = {
+    cx, sides,
+    x0: cx[ns[0].id] - 46,
+    x1: cx[ns[ns.length - 1].id] + 72,
+  };
+}
+
+// Dibuja el eje con su flecha, el conector de cada hito y su punto de color.
+function renderTimelineAxis(parent, opts = {}) {
+  if (!tlInfo) return;
+  const g = el('g', {}, parent);
+  const axis = EDGE_COLORS.gray;
+  const bg = opts.bg || canvasBg();
+  el('line', {
+    x1: tlInfo.x0, y1: 0, x2: tlInfo.x1, y2: 0,
+    stroke: axis, 'stroke-width': 2, 'stroke-linecap': 'round',
+    'marker-end': 'url(#arrow-gray)',
+  }, g);
+  for (const n of doc().nodes) {
+    const s = sizes[n.id];
+    const c = tlInfo.cx[n.id];
+    const up = tlInfo.sides[n.id] === 'up';
+    el('line', {
+      x1: n.x + s.w / 2, y1: up ? n.y + s.h : n.y, x2: c, y2: 0,
+      stroke: axis, 'stroke-width': 1.4,
+    }, g);
+    const pal = PALETTES[n.color] || PALETTES.slate;
+    el('circle', {
+      cx: c, cy: 0, r: 6, fill: pal.bg, stroke: bg, 'stroke-width': 2.5,
+    }, g);
+  }
+}
+
 /* ============================== render ============================== */
 
 const canvas = $('#canvas');
@@ -541,7 +621,8 @@ function renderNode(n, opts = {}) {
         fill: 'none', stroke: '#3d8bfd', 'stroke-width': 1.6,
       }, g);
     }
-    for (const side of ['top', 'bottom', 'left', 'right']) {
+    // en timelines no hay flechas entre hitos: sin puertos de conexión
+    if (!isTimeline()) for (const side of ['top', 'bottom', 'left', 'right']) {
       const [px, py] = anchorPoint({ ...n, x: 0, y: 0 }, side);
       const port = el('circle', {
         cx: px, cy: py, r: 5.5,
@@ -599,6 +680,7 @@ function renderEdge(edge, opts = {}) {
 function computeSizes() {
   sizes = {};
   for (const n of doc().nodes) sizes[n.id] = nodeSize(n);
+  if (isTimeline()) layoutTimeline();
   computeEdgeGeos();
 }
 
@@ -620,6 +702,7 @@ function renderAll() {
     const g = renderEdge(e);
     if (g) edgesG.appendChild(g);
   }
+  if (isTimeline()) renderTimelineAxis(edgesG);
   nodesG.innerHTML = '';
   for (const n of doc().nodes) nodesG.appendChild(renderNode(n));
   renderGuides();
@@ -653,6 +736,35 @@ function buildSwatches(containerSel) {
       const ns = selectedNodes();
       if (!ns.length) return;
       for (const n of ns) n.color = key;
+      commit();
+      renderAll();
+    });
+    wrap.appendChild(b);
+  }
+}
+
+/* ---------- lado del hito en el timeline ---------- */
+
+const SIDE_DEFS = [
+  { k: 'auto', t: 'Auto' },
+  { k: 'up', t: 'Arriba' },
+  { k: 'down', t: 'Abajo' },
+];
+
+function buildSideControl(containerSel) {
+  const wrap = $(containerSel);
+  for (const d of SIDE_DEFS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = d.t;
+    b.dataset.k = d.k;
+    b.addEventListener('click', () => {
+      const ns = selectedNodes();
+      if (!ns.length) return;
+      for (const n of ns) {
+        if (d.k === 'auto') delete n.side;
+        else n.side = d.k;
+      }
       commit();
       renderAll();
     });
@@ -913,6 +1025,7 @@ function renderCanvasOnly() {
     const g = renderEdge(e);
     if (g) edgesG.appendChild(g);
   }
+  if (isTimeline()) renderTimelineAxis(edgesG);
   nodesG.innerHTML = '';
   for (const n of doc().nodes) nodesG.appendChild(renderNode(n));
 }
@@ -941,9 +1054,20 @@ function syncPanel() {
     syncEdgeControlsAll(e);
   } else if (multi) {
     $('#pMultiCount').textContent = ns.length + ' nodos seleccionados';
+    // en timelines la posición la decide el layout: alinear/distribuir no aplican
+    $('#pAlignField').hidden = isTimeline();
+    $('#pDistField').hidden = isTimeline();
     for (const b of document.querySelectorAll('#pDistribute button')) {
       b.disabled = ns.length < 3;
     }
+  }
+  $('#pSideField').hidden = !isTimeline();
+  $('#pSideFieldMulti').hidden = !isTimeline();
+  const sideUniform = isTimeline() && ns.length &&
+    ns.every((m) => (m.side || 'auto') === (ns[0].side || 'auto'))
+    ? (ns[0].side || 'auto') : null;
+  for (const b of document.querySelectorAll('#pSide button, #pSideMulti button')) {
+    b.classList.toggle('active', b.dataset.k === sideUniform);
   }
   const uniform = ns.length &&
     ns.every((m) => (m.color || 'slate') === (ns[0].color || 'slate'))
@@ -996,9 +1120,14 @@ $('#pDuplicate').addEventListener('click', () => {
   if (!n) return;
   const copy = JSON.parse(JSON.stringify(n));
   copy.id = uid();
-  copy.x += 30;
-  copy.y += 30;
-  doc().nodes.push(copy);
+  if (isTimeline()) {
+    // el duplicado queda justo después del original en la secuencia
+    doc().nodes.splice(doc().nodes.indexOf(n) + 1, 0, copy);
+  } else {
+    copy.x += 30;
+    copy.y += 30;
+    doc().nodes.push(copy);
+  }
   selection = { type: 'node', ids: [copy.id] };
   commit();
   renderAll();
@@ -1023,6 +1152,9 @@ function deleteSelection() {
 
 /* ============================== documentos ============================== */
 
+const HINT_FLOW = 'doble clic: nuevo nodo / editar texto · puerto azul: conectar · ⇧+arrastre: selección múltiple · ⌘C/⌘V copiar y pegar · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom';
+const HINT_TIMELINE = 'doble clic: nuevo hito / editar texto · arrastrar: reordenar y elegir lado · ←/→ mover en la secuencia · ↑/↓ cambiar de lado · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom';
+
 function syncDocBar() {
   const sel = $('#docSelect');
   sel.innerHTML = '';
@@ -1036,6 +1168,9 @@ function syncDocBar() {
   if (document.activeElement !== $('#docName')) {
     $('#docName').value = doc().name;
   }
+  $('#addNode').textContent = isTimeline() ? '＋ Hito' : '＋ Nodo';
+  $('#autoLayout').hidden = isTimeline();
+  $('#hint').textContent = isTimeline() ? HINT_TIMELINE : HINT_FLOW;
 }
 
 $('#docSelect').addEventListener('change', (ev) => {
@@ -1053,8 +1188,13 @@ $('#docName').addEventListener('input', (ev) => {
 });
 $('#docName').addEventListener('blur', syncDocBar);
 
-$('#docNew').addEventListener('click', () => {
-  const d = newDoc('Diagrama ' + (Object.keys(store.docs).length + 1));
+const newDocPopup = $('#newDocPopup');
+
+function createDoc(type) {
+  const count = Object.keys(store.docs).length + 1;
+  const d = type === 'timeline'
+    ? seedTimeline('Timeline ' + count)
+    : newDoc('Diagrama ' + count);
   store.docs[d.id] = d;
   store.current = d.id;
   selection = null;
@@ -1062,7 +1202,34 @@ $('#docNew').addEventListener('click', () => {
   resetHistory();
   saveStore();
   renderAll();
+  if (type === 'timeline') fitView();
+}
+
+$('#docNew').addEventListener('click', () => {
+  if (!newDocPopup.hidden) {
+    newDocPopup.hidden = true;
+    return;
+  }
+  const r = $('#docNew').getBoundingClientRect();
+  newDocPopup.style.left = r.left + 'px';
+  newDocPopup.style.top = (r.bottom + 6) + 'px';
+  newDocPopup.hidden = false;
 });
+
+$('#newFlow').addEventListener('click', () => {
+  newDocPopup.hidden = true;
+  createDoc('flow');
+});
+
+$('#newTimeline').addEventListener('click', () => {
+  newDocPopup.hidden = true;
+  createDoc('timeline');
+});
+
+document.addEventListener('pointerdown', (ev) => {
+  if (newDocPopup.hidden || newDocPopup.contains(ev.target) || ev.target === $('#docNew')) return;
+  newDocPopup.hidden = true;
+}, true);
 
 $('#docDelete').addEventListener('click', () => {
   if (!confirm(`¿Eliminar “${doc().name}”? Esta acción no se puede deshacer.`)) return;
@@ -1156,6 +1323,17 @@ canvas.addEventListener('pointerdown', (ev) => {
       renderAll();
       return;
     }
+    if (isTimeline()) {
+      // en el timeline el arrastre reordena un solo hito
+      if (!inSel || selection.ids.length > 1) {
+        selection = { type: 'node', ids: [n.id] };
+        renderAll();
+      }
+      const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+      tlDragId = n.id;
+      mode = { type: 'dragT', id: n.id, offX: wx - n.x, offY: wy - n.y, moved: false };
+      return;
+    }
     if (!inSel) {
       selection = { type: 'node', ids: [n.id] };
       renderAll();
@@ -1222,6 +1400,33 @@ canvas.addEventListener('pointermove', (ev) => {
     renderGuides();
     return;
   }
+  if (mode.type === 'dragT') {
+    const n = getNode(mode.id);
+    if (!n || !tlInfo) return;
+    const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+    const nx = Math.round(wx - mode.offX);
+    const ny = Math.round(wy - mode.offY);
+    if (nx !== n.x || ny !== n.y) mode.moved = true;
+    n.x = nx;
+    n.y = ny;
+    // el lado se elige arrastrando: donde sueltes la tarjeta, ahí se queda
+    if (mode.moved) n.side = ny + sizes[n.id].h / 2 < 0 ? 'up' : 'down';
+    // índice destino según el centro del hito frente a los puntos del resto
+    const ns = doc().nodes;
+    const center = n.x + sizes[n.id].w / 2;
+    const cur = ns.indexOf(n);
+    const others = ns.filter((m) => m.id !== n.id);
+    let idx = others.length;
+    for (let i = 0; i < others.length; i++) {
+      if (center < tlInfo.cx[others[i].id]) { idx = i; break; }
+    }
+    if (idx !== cur) {
+      ns.splice(cur, 1);
+      ns.splice(idx, 0, n);
+    }
+    renderCanvasOnly();
+    return;
+  }
   if (mode.type === 'marquee') {
     const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
     mode.x1 = wx;
@@ -1277,6 +1482,13 @@ canvas.addEventListener('pointerup', (ev) => {
   if (mode.type === 'drag' && !mode.moved && mode.ids.length > 1) {
     // clic simple sobre un nodo de una selección múltiple: queda solo ese nodo
     selection = { type: 'node', ids: [mode.primary] };
+  }
+  if (mode.type === 'dragT') {
+    tlDragId = null;
+    if (mode.moved) {
+      computeSizes(); // coloca el hito en su hueco definitivo antes del commit
+      commit();
+    }
   }
   if (mode.type === 'marquee') {
     const x0 = Math.min(mode.x0, mode.x1), x1 = Math.max(mode.x0, mode.x1);
@@ -1354,6 +1566,10 @@ canvas.addEventListener('dblclick', (ev) => {
     return;
   }
   const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+  if (isTimeline()) {
+    addMilestoneAt(wx);
+    return;
+  }
   addNodeAt(wx - 95, wy - 27);
 });
 
@@ -1552,7 +1768,7 @@ async function pasteClipboard() {
     .map((e) => ({ ...e, id: uid(), from: map[e.from], to: map[e.to] }))
     .filter((e) => e.from && e.to);
   doc().nodes.push(...newNodes);
-  doc().edges.push(...newEdges);
+  if (!isTimeline()) doc().edges.push(...newEdges);
   selection = { type: 'node', ids: newNodes.map((n) => n.id) };
   panelFor = null;
   commit();
@@ -1602,6 +1818,17 @@ document.addEventListener('keydown', (ev) => {
   const ns = selectedNodes();
   if (ns.length && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) {
     ev.preventDefault();
+    if (isTimeline()) {
+      // ←/→ mueven el hito en la secuencia; ↑/↓ fuerzan su lado del eje
+      if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+        if (ns.length === 1) moveMilestone(ns[0], ev.key === 'ArrowLeft' ? -1 : 1);
+      } else {
+        for (const n of ns) n.side = ev.key === 'ArrowUp' ? 'up' : 'down';
+        commit();
+        renderAll();
+      }
+      return;
+    }
     const step = ev.shiftKey ? 10 : 1;
     for (const n of ns) {
       if (ev.key === 'ArrowUp') n.y -= step;
@@ -1635,7 +1862,45 @@ function addNodeAt(x, y) {
   $('#pTitle').select();
 }
 
+// Inserta un hito en el punto de la secuencia que corresponde a wx.
+function addMilestoneAt(wx) {
+  const n = {
+    id: uid(), x: 0, y: 0,
+    title: 'Nuevo hito', subtitle: 'descripción', color: 'slate', rows: [],
+  };
+  const ns = doc().nodes;
+  let idx = ns.length;
+  if (tlInfo) {
+    for (let i = 0; i < ns.length; i++) {
+      if (wx < tlInfo.cx[ns[i].id]) { idx = i; break; }
+    }
+  }
+  ns.splice(idx, 0, n);
+  selection = { type: 'node', ids: [n.id] };
+  panelFor = null;
+  commit();
+  renderAll();
+  $('#pTitle').focus();
+  $('#pTitle').select();
+}
+
+// Mueve un hito una posición antes o después en la secuencia.
+function moveMilestone(n, delta) {
+  const ns = doc().nodes;
+  const i = ns.indexOf(n);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= ns.length) return;
+  ns.splice(i, 1);
+  ns.splice(j, 0, n);
+  commit();
+  renderAll();
+}
+
 $('#addNode').addEventListener('click', () => {
+  if (isTimeline()) {
+    addMilestoneAt(Infinity);
+    return;
+  }
   const rect = canvas.getBoundingClientRect();
   const [wx, wy] = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
   addNodeAt(wx - 95 + Math.random() * 40 - 20, wy - 27 + Math.random() * 40 - 20);
@@ -1673,6 +1938,12 @@ function contentBounds() {
     y0 = Math.min(y0, n.y);
     x1 = Math.max(x1, n.x + s.w + (s.note ? NOTE_GAP + s.note.w : 0));
     y1 = Math.max(y1, n.y + Math.max(s.h, s.note ? s.note.h : 0));
+  }
+  if (isTimeline() && tlInfo) {
+    x0 = Math.min(x0, tlInfo.x0);
+    x1 = Math.max(x1, tlInfo.x1 + 14); // punta de flecha del eje
+    y0 = Math.min(y0, -10);
+    y1 = Math.max(y1, 10);
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
@@ -1727,7 +1998,7 @@ function animatePositions(targets, duration = 320) {
 // Acomoda el diagrama por capas siguiendo las flechas (raíces arriba).
 function autoLayout() {
   const ns = doc().nodes;
-  if (ns.length < 2 || animating) return;
+  if (isTimeline() || ns.length < 2 || animating) return;
   computeSizes();
   const E = doc().edges.filter((e) =>
     e.from !== e.to && getNode(e.from) && getNode(e.to));
@@ -1867,7 +2138,7 @@ $('#shareBtn').addEventListener('click', async () => {
   const d = doc();
   if (!d.nodes.length) { alert('El diagrama está vacío.'); return; }
   const data = await deflateB64(JSON.stringify(
-    { app: 'diagramb', name: d.name, nodes: d.nodes, edges: d.edges }
+    { app: 'diagramb', name: d.name, type: d.type, nodes: d.nodes, edges: d.edges }
   ));
   const url = location.href.split('#')[0] + '#d=' + data;
   try {
@@ -1887,7 +2158,7 @@ async function handleShareHash() {
     if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) {
       throw new Error('estructura inválida');
     }
-    const d = newDoc(p.name || 'Compartido');
+    const d = newDoc(p.name || 'Compartido', p.type === 'timeline' ? 'timeline' : 'flow');
     d.nodes = p.nodes;
     d.edges = p.edges;
     store.docs[d.id] = d;
@@ -1929,6 +2200,7 @@ function buildExportSvg() {
     const g = renderEdge(e, { forExport: true, bg });
     if (g) svg.appendChild(g);
   }
+  if (isTimeline()) renderTimelineAxis(svg, { bg });
   for (const n of doc().nodes) svg.appendChild(renderNode(n, { forExport: true }));
   return { svg, w, h };
 }
@@ -1979,7 +2251,7 @@ $('#exportPng').addEventListener('click', () => {
 $('#exportJson').addEventListener('click', () => {
   const d = doc();
   const data = JSON.stringify(
-    { app: 'diagramb', name: d.name, nodes: d.nodes, edges: d.edges }, null, 2
+    { app: 'diagramb', name: d.name, type: d.type, nodes: d.nodes, edges: d.edges }, null, 2
   );
   downloadBlob(new Blob([data], { type: 'application/json' }), fileSlug() + '.json');
 });
@@ -1997,7 +2269,8 @@ $('#importFile').addEventListener('change', (ev) => {
       if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) {
         throw new Error('el archivo no tiene nodos y flechas');
       }
-      const d = newDoc(p.name || file.name.replace(/\.json$/i, '') || 'Importado');
+      const d = newDoc(p.name || file.name.replace(/\.json$/i, '') || 'Importado',
+        p.type === 'timeline' ? 'timeline' : 'flow');
       d.nodes = p.nodes;
       d.edges = p.edges;
       store.docs[d.id] = d;
@@ -2021,6 +2294,8 @@ loadStore();
 ensureEdgeMarkers(canvas.querySelector('defs'));
 buildSwatches('#pColors');
 buildSwatches('#pColorsMulti');
+buildSideControl('#pSide');
+buildSideControl('#pSideMulti');
 buildAlignControls();
 buildEdgeControls('#pEdgeControls', selectedEdge);
 buildEdgeControls('#popupEdgeControls', popupEdge);
