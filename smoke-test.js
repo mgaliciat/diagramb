@@ -321,25 +321,32 @@ async function runSmoke() {
                    m1.y < m2.y + s2.h && m2.y < m1.y + s1.h;
           }));
           ok('auto-layout: sin nodos encimados', !overlap);
-          // una flecha A→C con B atravesada en medio debe arquearse y esquivarla
+          // las flechas deben esquivar tarjetas ajenas: B atravesada en medio
+          // de A→C, y B2 desalineada y pegada cerca del origen de A2→C2
           api.doc.nodes.push(
             { id: 'avA', x: 2000, y: 0, title: 'A', subtitle: '', color: 'slate', rows: [] },
             { id: 'avB', x: 2000, y: 180, title: 'B', subtitle: '', color: 'slate', rows: [] },
-            { id: 'avC', x: 2000, y: 360, title: 'C', subtitle: '', color: 'slate', rows: [] });
-          api.doc.edges.push({ id: 'avE', from: 'avA', to: 'avC', label: '' });
+            { id: 'avC', x: 2000, y: 360, title: 'C', subtitle: '', color: 'slate', rows: [] },
+            { id: 'avA2', x: 2600, y: 0, title: 'A2', subtitle: '', color: 'slate', rows: [] },
+            { id: 'avB2', x: 2680, y: 140, title: 'B2', subtitle: '', color: 'slate', rows: [] },
+            { id: 'avC2', x: 2600, y: 520, title: 'C2', subtitle: '', color: 'slate', rows: [] });
+          api.doc.edges.push(
+            { id: 'avE', from: 'avA', to: 'avC', label: '' },
+            { id: 'avE2', from: 'avA2', to: 'avC2', label: '' });
           api.renderAll();
-          const v = document.querySelector('path.edge-hit[data-id="avE"]')
-            .getAttribute('d').match(/-?[\d.]+/g).map(Number);
-          const nB = api.doc.nodes.find((m) => m.id === 'avB');
-          const sB = api.sizes.avB;
-          let crosses = false;
-          for (let i = 1; i < 24; i++) {
-            const t = i / 24, u = 1 - t;
-            const px = u * u * u * v[0] + 3 * u * u * t * v[2] + 3 * u * t * t * v[4] + t * t * t * v[6];
-            const py = u * u * u * v[1] + 3 * u * u * t * v[3] + 3 * u * t * t * v[5] + t * t * t * v[7];
-            if (px >= nB.x && px <= nB.x + sB.w && py >= nB.y && py <= nB.y + sB.h) crosses = true;
-          }
-          ok('las flechas esquivan tarjetas ajenas', !crosses);
+          const edgeCrosses = (edgeId, nodeId) => {
+            const path = document.querySelector(`path.edge-hit[data-id="${edgeId}"]`);
+            const nn = api.doc.nodes.find((m) => m.id === nodeId);
+            const s = api.sizes[nodeId];
+            const len = path.getTotalLength();
+            for (let i = 1; i < 40; i++) {
+              const p = path.getPointAtLength((len * i) / 40);
+              if (p.x >= nn.x && p.x <= nn.x + s.w && p.y >= nn.y && p.y <= nn.y + s.h) return true;
+            }
+            return false;
+          };
+          ok('las flechas esquivan tarjetas ajenas', !edgeCrosses('avE', 'avB'));
+          ok('el carril lateral esquiva estorbos junto al origen', !edgeCrosses('avE2', 'avB2'));
           report(out);
         }, 800);
       }, 250);

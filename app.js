@@ -374,26 +374,110 @@ function computeEdgeGeos() {
   for (const it of ends) edgeGeos[it.e.id] = edgeGeometryFor(it);
 }
 
-// Tarjetas ajenas que la curva atraviesa, como cajas [x, y, w, h] infladas.
-function nodesOnPath(p1, c1, c2, p2, skipA, skipB) {
-  const hits = [];
+// Tarjetas ajenas a la flecha, como cajas { id, box: [x, y, w, h] } infladas.
+function nodeBoxes(skipA, skipB) {
+  const out = [];
   for (const n of doc().nodes) {
     if (n.id === skipA || n.id === skipB) continue;
     const s = sizes[n.id];
     if (!s) continue;
-    const box = [n.x - 6, n.y - 6, s.w + 12, s.h + 12];
-    for (let i = 1; i < 24; i++) {
-      const t = i / 24;
-      const u = 1 - t;
-      const x = u * u * u * p1[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * p2[0];
-      const y = u * u * u * p1[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * p2[1];
-      if (x >= box[0] && x <= box[0] + box[2] && y >= box[1] && y <= box[1] + box[3]) {
-        hits.push(box);
-        break;
-      }
+    out.push({ id: n.id, box: [n.x - 6, n.y - 6, s.w + 12, s.h + 12] });
+  }
+  return out;
+}
+
+function cubicSamples(P0, C1, C2, P3, out) {
+  for (let i = 1; i < 24; i++) {
+    const t = i / 24;
+    const u = 1 - t;
+    out.push([
+      u * u * u * P0[0] + 3 * u * u * t * C1[0] + 3 * u * t * t * C2[0] + t * t * t * P3[0],
+      u * u * u * P0[1] + 3 * u * u * t * C1[1] + 3 * u * t * t * C2[1] + t * t * t * P3[1],
+    ]);
+  }
+  return out;
+}
+
+function hitBoxes(samples, candidates) {
+  const hit = [];
+  for (const c of candidates) {
+    const [bx, by, bw, bh] = c.box;
+    if (samples.some(([x, y]) => x >= bx && x <= bx + bw && y >= by && y <= by + bh)) {
+      hit.push(c);
     }
   }
-  return hits;
+  return hit;
+}
+
+// Ruta de respaldo cuando el arqueo no alcanza: recorre un carril lateral
+// despejado junto a los estorbos y entra al destino por su lado natural.
+// Se amplía iterativamente hasta verificar por muestreo que no toca nada.
+function laneGeometry(p1, p2, nA, nB, axis, candidates, firstHits) {
+  const main = 1 - axis; // eje de avance de la flecha
+  const dir = p2[main] >= p1[main] ? 1 : -1;
+  const straight = (p1[axis] + p2[axis]) / 2;
+
+  const attempt = (side) => {
+    const seen = new Set(firstHits.map((h) => h.id));
+    const blockers = [...firstHits];
+    for (let i = 0; i < 5; i++) {
+      let lo = Infinity, hi = -Infinity, m0 = Infinity, m1 = -Infinity;
+      for (const { box } of blockers) {
+        lo = Math.min(lo, box[axis]);
+        hi = Math.max(hi, box[axis] + box[axis + 2]);
+        m0 = Math.min(m0, box[main]);
+        m1 = Math.max(m1, box[main] + box[main + 2]);
+      }
+      const lane = side < 0 ? lo - 26 : hi + 26;
+      const w1 = [];
+      const w2 = [];
+      w1[axis] = lane;
+      w2[axis] = lane;
+      w1[main] = dir > 0 ? m0 - 20 : m1 + 20;
+      w2[main] = dir > 0 ? m1 + 20 : m0 - 20;
+      const cA = [p1[0] + nA[0] * 40, p1[1] + nA[1] * 40];
+      const cB = [p2[0] + nB[0] * 40, p2[1] + nB[1] * 40];
+      const cW1 = [];
+      const cW2 = [];
+      cW1[axis] = lane;
+      cW1[main] = w1[main] - dir * 32;
+      cW2[axis] = lane;
+      cW2[main] = w2[main] + dir * 32;
+      const samples = cubicSamples(p1, cA, cW1, w1, []);
+      for (let j = 1; j < 8; j++) {
+        const t = j / 8;
+        samples.push([w1[0] + (w2[0] - w1[0]) * t, w1[1] + (w2[1] - w1[1]) * t]);
+      }
+      cubicSamples(w2, cW2, cB, p2, samples);
+      const newHits = hitBoxes(samples, candidates);
+      if (!newHits.length) {
+        return {
+          d: `M ${p1[0]} ${p1[1]} C ${cA[0]} ${cA[1]}, ${cW1[0]} ${cW1[1]}, ${w1[0]} ${w1[1]} ` +
+            `L ${w2[0]} ${w2[1]} ` +
+            `C ${cW2[0]} ${cW2[1]}, ${cB[0]} ${cB[1]}, ${p2[0]} ${p2[1]}`,
+          mid: [(w1[0] + w2[0]) / 2, (w1[1] + w2[1]) / 2],
+        };
+      }
+      let grew = false;
+      for (const h of newHits) {
+        if (!seen.has(h.id)) {
+          seen.add(h.id);
+          blockers.push(h);
+          grew = true;
+        }
+      }
+      if (!grew) return null; // los mismos estorbos: por este lado no se puede
+    }
+    return null;
+  };
+
+  let lo = Infinity, hi = -Infinity;
+  for (const { box } of firstHits) {
+    lo = Math.min(lo, box[axis]);
+    hi = Math.max(hi, box[axis] + box[axis + 2]);
+  }
+  const firstSide = straight - lo < hi - straight ? -1 : 1;
+  return attempt(firstSide) || attempt(-firstSide);
 }
 
 function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
@@ -408,15 +492,16 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
   const c1 = [p1[0] + nA[0] * k, p1[1] + nA[1] * k];
   const c2 = [p2[0] + nB[0] * k, p2[1] + nB[1] * k];
 
-  // si el trazo atraviesa tarjetas ajenas, arquea la curva hacia el costado
-  // libre más cercano, en el eje transversal a la dirección de salida
+  // si el trazo atraviesa tarjetas ajenas, primero se intenta arquear la
+  // curva hacia el costado libre; si no alcanza, se enruta por un carril
   const axis = sideA === 'top' || sideA === 'bottom' ? 0 : 1;
-  for (let pass = 0; pass < 3; pass++) {
-    const hits = nodesOnPath(p1, c1, c2, p2, a.id, b.id);
-    if (!hits.length) break;
+  const candidates = nodeBoxes(a.id, b.id);
+  let hits = hitBoxes(cubicSamples(p1, c1, c2, p2, []), candidates);
+  const firstHits = hits;
+  for (let pass = 0; pass < 3 && hits.length; pass++) {
     let lo = Infinity;
     let hi = -Infinity;
-    for (const box of hits) {
+    for (const { box } of hits) {
       lo = Math.min(lo, box[axis]);
       hi = Math.max(hi, box[axis] + box[axis + 2]);
     }
@@ -426,6 +511,11 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
     const off = (target - cur) / 0.75;
     c1[axis] += off;
     c2[axis] += off;
+    hits = hitBoxes(cubicSamples(p1, c1, c2, p2, []), candidates);
+  }
+  if (hits.length) {
+    const lane = laneGeometry(p1, p2, nA, nB, axis, candidates, firstHits);
+    if (lane) return lane;
   }
 
   const mid = [
