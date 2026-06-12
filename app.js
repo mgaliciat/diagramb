@@ -91,7 +91,7 @@ const STORAGE_KEY = 'diagramb.v1';
 
 let store = null;       // { current, docs: { id: doc } }
 let sizes = {};         // tamaños de nodos calculados en cada render
-let selection = null;   // { type: 'node' | 'edge', id }
+let selection = null;   // { type: 'node', ids: [...] } | { type: 'edge', id }
 let guides = { x: null, y: null };
 let history = [];
 let hIndex = -1;
@@ -194,10 +194,12 @@ function restoreSnapshot(snap) {
   doc().nodes = data.nodes;
   doc().edges = data.edges;
   if (selection) {
-    const exists = selection.type === 'node'
-      ? doc().nodes.some((n) => n.id === selection.id)
-      : doc().edges.some((e) => e.id === selection.id);
-    if (!exists) selection = null;
+    if (selection.type === 'node') {
+      selection.ids = selection.ids.filter((id) => doc().nodes.some((n) => n.id === id));
+      if (!selection.ids.length) selection = null;
+    } else if (!doc().edges.some((e) => e.id === selection.id)) {
+      selection = null;
+    }
   }
   saveStore();
   renderAll();
@@ -339,42 +341,58 @@ function addText(parent, str, x, y, opts) {
 function renderNode(n, opts = {}) {
   const s = sizes[n.id];
   const pal = PALETTES[n.color] || PALETTES.slate;
+  const isSel = !opts.forExport && selection &&
+    selection.type === 'node' && selection.ids.includes(n.id);
   const g = el('g', { transform: `translate(${n.x} ${n.y})` });
   if (!opts.forExport) {
     g.classList.add('node');
     g.dataset.id = n.id;
-    if (selection && selection.type === 'node' && selection.id === n.id) {
-      g.classList.add('selected');
-    }
+    if (isSel) g.classList.add('selected');
   }
 
   el('rect', { width: s.w, height: s.h, rx: NODE_RADIUS, fill: pal.bg }, g);
 
+  const editable = []; // [elemento, campo, fila, columna]
   if (!s.rows.length) {
     const cx = s.w / 2;
     const titleY = n.subtitle ? 30 : s.h / 2 + 5;
-    addText(g, n.title, cx, titleY, { fill: pal.title, size: 15, weight: 600, anchor: 'middle' });
+    editable.push([addText(g, n.title, cx, titleY,
+      { fill: pal.title, size: 15, weight: 600, anchor: 'middle' }), 'title']);
     if (n.subtitle) {
-      addText(g, n.subtitle, cx, titleY + 21, { fill: pal.sub, size: 13, anchor: 'middle' });
+      editable.push([addText(g, n.subtitle, cx, titleY + 21,
+        { fill: pal.sub, size: 13, anchor: 'middle' }), 'subtitle']);
     }
   } else {
     let y = 16 + 15;
-    addText(g, n.title, PAD_X, y, { fill: pal.title, size: 15, weight: 600 });
+    editable.push([addText(g, n.title, PAD_X, y,
+      { fill: pal.title, size: 15, weight: 600 }), 'title']);
     if (n.subtitle) {
       y += 19;
-      addText(g, n.subtitle, PAD_X, y, { fill: pal.sub, size: 13 });
+      editable.push([addText(g, n.subtitle, PAD_X, y, { fill: pal.sub, size: 13 }), 'subtitle']);
     }
     y += 12;
     const valX = s.w - PAD_X;
-    for (const [k, v] of s.rows) {
+    for (const row of s.rows) {
       y += 22;
-      addText(g, k, PAD_X, y, { fill: pal.sub, size: 12.5, mono: true });
-      addText(g, v, valX, y, { fill: pal.val, size: 12.5, mono: true, anchor: 'end' });
+      const ri = n.rows.indexOf(row);
+      editable.push([addText(g, row[0], PAD_X, y,
+        { fill: pal.sub, size: 12.5, mono: true }), 'row', ri, 0]);
+      editable.push([addText(g, row[1], valX, y,
+        { fill: pal.val, size: 12.5, mono: true, anchor: 'end' }), 'row', ri, 1]);
     }
   }
 
   if (!opts.forExport) {
-    if (selection && selection.type === 'node' && selection.id === n.id) {
+    for (const [tEl, field, ri, ci] of editable) {
+      tEl.classList.add('editable');
+      tEl.dataset.editNode = n.id;
+      tEl.dataset.editField = field;
+      if (field === 'row') {
+        tEl.dataset.editRow = ri;
+        tEl.dataset.editCol = ci;
+      }
+    }
+    if (isSel) {
       el('rect', {
         x: -4, y: -4, width: s.w + 8, height: s.h + 8, rx: NODE_RADIUS + 4,
         fill: 'none', stroke: '#3d8bfd', 'stroke-width': 1.6,
@@ -460,10 +478,11 @@ function renderAll() {
 const panel = $('#panel');
 const panelNode = $('#panelNode');
 const panelEdge = $('#panelEdge');
+const panelMulti = $('#panelMulti');
 let panelFor = null; // evita reconstruir las filas mientras se escribe en ellas
 
-function buildSwatches() {
-  const wrap = $('#pColors');
+function buildSwatches(containerSel) {
+  const wrap = $(containerSel);
   wrap.innerHTML = '';
   for (const [key, pal] of Object.entries(PALETTES)) {
     const b = document.createElement('button');
@@ -472,9 +491,9 @@ function buildSwatches() {
     b.title = key;
     b.dataset.color = key;
     b.addEventListener('click', () => {
-      const n = selectedNode();
-      if (!n) return;
-      n.color = key;
+      const ns = selectedNodes();
+      if (!ns.length) return;
+      for (const n of ns) n.color = key;
       commit();
       renderAll();
     });
@@ -482,8 +501,13 @@ function buildSwatches() {
   }
 }
 
-const selectedNode = () =>
-  selection && selection.type === 'node' ? getNode(selection.id) : null;
+const selectedNodes = () =>
+  selection && selection.type === 'node'
+    ? selection.ids.map(getNode).filter(Boolean) : [];
+const selectedNode = () => {
+  const ns = selectedNodes();
+  return ns.length === 1 ? ns[0] : null;
+};
 const selectedEdge = () =>
   selection && selection.type === 'edge'
     ? doc().edges.find((e) => e.id === selection.id) : null;
@@ -532,23 +556,33 @@ function renderCanvasOnly() {
 }
 
 function syncPanel() {
-  const n = selectedNode();
+  const ns = selectedNodes();
+  const n = ns.length === 1 ? ns[0] : null;
+  const multi = ns.length > 1;
   const e = selectedEdge();
-  panel.hidden = !n && !e;
+  panel.hidden = !n && !e && !multi;
   panelNode.hidden = !n;
   panelEdge.hidden = !e;
-  const key = selection ? selection.type + ':' + selection.id : null;
+  panelMulti.hidden = !multi;
+  const key = selection
+    ? selection.type + ':' + (selection.type === 'node' ? selection.ids.join(',') : selection.id)
+    : null;
   if (n) {
     if (panelFor !== key) {
       $('#pTitle').value = n.title || '';
       $('#pSub').value = n.subtitle || '';
       buildRowsEditor(n);
     }
-    for (const b of document.querySelectorAll('.swatch')) {
-      b.classList.toggle('active', b.dataset.color === (n.color || 'slate'));
-    }
   } else if (e) {
     if (panelFor !== key) $('#pLabel').value = e.label || '';
+  } else if (multi) {
+    $('#pMultiCount').textContent = ns.length + ' nodos seleccionados';
+  }
+  const uniform = ns.length &&
+    ns.every((m) => (m.color || 'slate') === (ns[0].color || 'slate'))
+    ? (ns[0].color || 'slate') : null;
+  for (const b of document.querySelectorAll('.swatch')) {
+    b.classList.toggle('active', b.dataset.color === uniform);
   }
   panelFor = key;
 }
@@ -591,20 +625,20 @@ $('#pDuplicate').addEventListener('click', () => {
   copy.x += 30;
   copy.y += 30;
   doc().nodes.push(copy);
-  selection = { type: 'node', id: copy.id };
+  selection = { type: 'node', ids: [copy.id] };
   commit();
   renderAll();
 });
 $('#pDeleteNode').addEventListener('click', deleteSelection);
 $('#pDeleteEdge').addEventListener('click', deleteSelection);
+$('#pDeleteMulti').addEventListener('click', deleteSelection);
 
 function deleteSelection() {
   if (!selection) return;
   if (selection.type === 'node') {
-    doc().nodes = doc().nodes.filter((n) => n.id !== selection.id);
-    doc().edges = doc().edges.filter(
-      (e) => e.from !== selection.id && e.to !== selection.id
-    );
+    const ids = new Set(selection.ids);
+    doc().nodes = doc().nodes.filter((n) => !ids.has(n.id));
+    doc().edges = doc().edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
   } else {
     doc().edges = doc().edges.filter((e) => e.id !== selection.id);
   }
@@ -684,13 +718,13 @@ function screenToWorld(clientX, clientY) {
   return [(clientX - rect.left - v.x) / v.z, (clientY - rect.top - v.y) / v.z];
 }
 
-function applyAlignGuides(n, nx, ny) {
+function applyAlignGuides(n, nx, ny, skipIds) {
   const s = sizes[n.id];
   const th = 6 / view().z;
   guides = { x: null, y: null };
   let bestX = null, bestY = null;
   for (const o of doc().nodes) {
-    if (o.id === n.id) continue;
+    if (o.id === n.id || (skipIds && skipIds.has(o.id))) continue;
     const os = sizes[o.id];
     const oxs = [o.x, o.x + os.w / 2, o.x + os.w];
     const oys = [o.y, o.y + os.h / 2, o.y + os.h];
@@ -729,12 +763,35 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (nodeG && ev.button === 0) {
     const n = getNode(nodeG.dataset.id);
     if (!n) return;
-    if (!selection || selection.type !== 'node' || selection.id !== n.id) {
-      selection = { type: 'node', id: n.id };
+    const inSel = selection && selection.type === 'node' && selection.ids.includes(n.id);
+    if (ev.shiftKey) {
+      // shift+clic: agrega o quita de la selección, sin arrastrar
+      if (inSel) {
+        selection.ids = selection.ids.filter((id) => id !== n.id);
+        if (!selection.ids.length) selection = null;
+      } else if (selection && selection.type === 'node') {
+        selection.ids.push(n.id);
+      } else {
+        selection = { type: 'node', ids: [n.id] };
+      }
+      renderAll();
+      return;
+    }
+    if (!inSel) {
+      selection = { type: 'node', ids: [n.id] };
       renderAll();
     }
     const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
-    mode = { type: 'drag', id: n.id, offX: wx - n.x, offY: wy - n.y, moved: false };
+    const ids = selection.ids.slice();
+    const orig = {};
+    for (const id of ids) {
+      const m = getNode(id);
+      if (m) orig[id] = [m.x, m.y];
+    }
+    mode = {
+      type: 'drag', primary: n.id, ids, idSet: new Set(ids), orig,
+      offX: wx - n.x, offY: wy - n.y, moved: false,
+    };
     return;
   }
   if (edgeHit && ev.button === 0) {
@@ -743,7 +800,12 @@ canvas.addEventListener('pointerdown', (ev) => {
     mode = null;
     return;
   }
-  // fondo: deseleccionar y hacer pan
+  // fondo: shift = selección por rectángulo; si no, deseleccionar y hacer pan
+  if (ev.shiftKey && ev.button === 0) {
+    const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+    mode = { type: 'marquee', x0: wx, y0: wy, x1: wx, y1: wy };
+    return;
+  }
   if (selection) {
     selection = null;
     renderAll();
@@ -762,17 +824,38 @@ canvas.addEventListener('pointermove', (ev) => {
     return;
   }
   if (mode.type === 'drag') {
-    const n = getNode(mode.id);
+    const n = getNode(mode.primary);
     if (!n) return;
     const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
     let nx = wx - mode.offX;
     let ny = wy - mode.offY;
-    [nx, ny] = applyAlignGuides(n, nx, ny);
-    if (nx !== n.x || ny !== n.y) mode.moved = true;
-    n.x = Math.round(nx);
-    n.y = Math.round(ny);
+    [nx, ny] = applyAlignGuides(n, nx, ny, mode.idSet);
+    const dx = Math.round(nx - mode.orig[mode.primary][0]);
+    const dy = Math.round(ny - mode.orig[mode.primary][1]);
+    if (dx || dy) mode.moved = true;
+    for (const id of mode.ids) {
+      const m = getNode(id);
+      if (!m) continue;
+      m.x = mode.orig[id][0] + dx;
+      m.y = mode.orig[id][1] + dy;
+    }
     renderCanvasOnly();
     renderGuides();
+    return;
+  }
+  if (mode.type === 'marquee') {
+    const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+    mode.x1 = wx;
+    mode.y1 = wy;
+    const z = view().z;
+    draftG.innerHTML = '';
+    el('rect', {
+      x: Math.min(mode.x0, wx), y: Math.min(mode.y0, wy),
+      width: Math.abs(wx - mode.x0), height: Math.abs(wy - mode.y0),
+      fill: 'rgba(61, 139, 253, 0.08)', stroke: '#3d8bfd',
+      'stroke-width': 1 / z, 'stroke-dasharray': `${4 / z} ${3 / z}`,
+      'pointer-events': 'none',
+    }, draftG);
     return;
   }
   if (mode.type === 'connect') {
@@ -811,6 +894,22 @@ canvas.addEventListener('pointermove', (ev) => {
 canvas.addEventListener('pointerup', () => {
   if (!mode) return;
   if (mode.type === 'drag' && mode.moved) commit();
+  if (mode.type === 'drag' && !mode.moved && mode.ids.length > 1) {
+    // clic simple sobre un nodo de una selección múltiple: queda solo ese nodo
+    selection = { type: 'node', ids: [mode.primary] };
+  }
+  if (mode.type === 'marquee') {
+    const x0 = Math.min(mode.x0, mode.x1), x1 = Math.max(mode.x0, mode.x1);
+    const y0 = Math.min(mode.y0, mode.y1), y1 = Math.max(mode.y0, mode.y1);
+    const ids = doc().nodes
+      .filter((n) => {
+        const s = sizes[n.id];
+        return n.x < x1 && n.x + s.w > x0 && n.y < y1 && n.y + s.h > y0;
+      })
+      .map((n) => n.id);
+    selection = ids.length ? { type: 'node', ids } : null;
+    draftG.innerHTML = '';
+  }
   if (mode.type === 'connect') {
     if (mode.target) {
       const dup = doc().edges.some((e) => e.from === mode.from && e.to === mode.target);
@@ -830,15 +929,96 @@ canvas.addEventListener('pointerup', () => {
 });
 
 canvas.addEventListener('dblclick', (ev) => {
+  if (ev.target.dataset && ev.target.dataset.editNode) {
+    startInlineEdit(ev.target);
+    return;
+  }
   const nodeG = ev.target.closest ? ev.target.closest('g.node') : null;
   if (nodeG) {
-    $('#pTitle').focus();
-    $('#pTitle').select();
+    const titleEl = nodeG.querySelector('text[data-edit-field="title"]');
+    if (titleEl) startInlineEdit(titleEl);
     return;
   }
   const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
   addNodeAt(wx - 95, wy - 27);
 });
+
+/* ============================== edición inline ============================== */
+
+let inlineInput = null;
+
+function startInlineEdit(textEl) {
+  const n = getNode(textEl.dataset.editNode);
+  if (!n) return;
+  const field = textEl.dataset.editField;
+  const ri = +textEl.dataset.editRow;
+  const ci = +textEl.dataset.editCol;
+  const getVal = () =>
+    field === 'title' ? (n.title || '')
+    : field === 'subtitle' ? (n.subtitle || '')
+    : ((n.rows[ri] || [])[ci] || '');
+  const setVal = (v) => {
+    if (field === 'title') n.title = v;
+    else if (field === 'subtitle') n.subtitle = v;
+    else if (n.rows[ri]) n.rows[ri][ci] = v;
+  };
+
+  if (inlineInput) inlineInput.remove();
+  const z = view().z;
+  const rect = textEl.getBoundingClientRect();
+  const anchor = textEl.getAttribute('text-anchor') || 'start';
+  const pal = PALETTES[n.color] || PALETTES.slate;
+  const fs = parseFloat(textEl.getAttribute('font-size')) * z;
+  const w = Math.max(rect.width + 50 * z, 120 * z);
+
+  const input = document.createElement('input');
+  inlineInput = input;
+  input.type = 'text';
+  input.className = 'inline-edit';
+  input.spellcheck = false;
+  input.value = getVal();
+  const original = input.value;
+  input.style.font =
+    `${textEl.getAttribute('font-weight') || 400} ${fs}px ${textEl.getAttribute('font-family')}`;
+  input.style.color = textEl.getAttribute('fill');
+  input.style.background = pal.bg;
+  input.style.width = w + 'px';
+  input.style.top = (rect.top + rect.height / 2 - fs / 2 - 6) + 'px';
+  if (anchor === 'middle') {
+    input.style.left = (rect.left + rect.width / 2 - w / 2) + 'px';
+    input.style.textAlign = 'center';
+  } else if (anchor === 'end') {
+    input.style.left = (rect.right - w + 8) + 'px';
+    input.style.textAlign = 'right';
+  } else {
+    input.style.left = (rect.left - 8) + 'px';
+  }
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (keep) => {
+    if (done) return;
+    done = true;
+    setVal(keep ? input.value : original);
+    input.remove();
+    if (inlineInput === input) inlineInput = null;
+    panelFor = null;
+    commit();
+    renderAll();
+  };
+  input.addEventListener('input', () => {
+    setVal(input.value);
+    renderCanvasOnly();
+  });
+  input.addEventListener('keydown', (kev) => {
+    kev.stopPropagation();
+    if (kev.key === 'Enter') finish(true);
+    if (kev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+}
 
 canvas.addEventListener('wheel', (ev) => {
   ev.preventDefault();
@@ -864,6 +1044,70 @@ function isTyping() {
   return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT');
 }
 
+/* ============================== copiar / pegar ============================== */
+
+let clipboardMem = null; // respaldo si el portapapeles del sistema no está disponible
+let lastPasted = '';
+let pasteSeq = 0;
+
+function copySelection() {
+  const ns = selectedNodes();
+  if (!ns.length) return;
+  const ids = new Set(ns.map((n) => n.id));
+  const payload = {
+    app: 'diagramb',
+    nodes: JSON.parse(JSON.stringify(ns)),
+    edges: JSON.parse(JSON.stringify(
+      doc().edges.filter((e) => ids.has(e.from) && ids.has(e.to))
+    )),
+  };
+  clipboardMem = payload;
+  lastPasted = '';
+  pasteSeq = 0;
+  try {
+    navigator.clipboard.writeText(JSON.stringify(payload, null, 2)).catch(() => {});
+  } catch (_) { /* sin permiso de portapapeles */ }
+}
+
+async function pasteClipboard() {
+  let payload = null;
+  let raw = 'mem';
+  try {
+    // si el portapapeles no responde rápido (permiso pendiente), usar el respaldo
+    const txt = await Promise.race([
+      navigator.clipboard.readText(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 350)),
+    ]);
+    const p = JSON.parse(txt);
+    if (p && p.app === 'diagramb' && Array.isArray(p.nodes)) {
+      payload = p;
+      raw = txt;
+    }
+  } catch (_) { /* portapapeles no legible: usar respaldo */ }
+  if (!payload) payload = clipboardMem;
+  if (!payload || !payload.nodes.length) return;
+  pasteSeq = raw === lastPasted ? pasteSeq + 1 : 1;
+  lastPasted = raw;
+  const off = 24 * pasteSeq;
+  const map = {};
+  const newNodes = payload.nodes.map((n) => {
+    const copy = JSON.parse(JSON.stringify(n));
+    map[n.id] = copy.id = uid();
+    copy.x += off;
+    copy.y += off;
+    return copy;
+  });
+  const newEdges = (payload.edges || [])
+    .map((e) => ({ ...e, id: uid(), from: map[e.from], to: map[e.to] }))
+    .filter((e) => e.from && e.to);
+  doc().nodes.push(...newNodes);
+  doc().edges.push(...newEdges);
+  selection = { type: 'node', ids: newNodes.map((n) => n.id) };
+  panelFor = null;
+  commit();
+  renderAll();
+}
+
 document.addEventListener('keydown', (ev) => {
   const meta = ev.metaKey || ev.ctrlKey;
   if (meta && ev.key.toLowerCase() === 'z') {
@@ -876,6 +1120,14 @@ document.addEventListener('keydown', (ev) => {
     if (isTyping()) return;
     ev.preventDefault();
     redo();
+    return;
+  }
+  if (meta && !isTyping() && ['c', 'x', 'v'].includes(ev.key.toLowerCase())) {
+    const k = ev.key.toLowerCase();
+    if (k !== 'c') ev.preventDefault();
+    if (k === 'c') copySelection();
+    if (k === 'x') { copySelection(); deleteSelection(); }
+    if (k === 'v') pasteClipboard();
     return;
   }
   if (isTyping()) {
@@ -892,14 +1144,16 @@ document.addEventListener('keydown', (ev) => {
     renderAll();
     return;
   }
-  const n = selectedNode();
-  if (n && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) {
+  const ns = selectedNodes();
+  if (ns.length && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) {
     ev.preventDefault();
     const step = ev.shiftKey ? 10 : 1;
-    if (ev.key === 'ArrowUp') n.y -= step;
-    if (ev.key === 'ArrowDown') n.y += step;
-    if (ev.key === 'ArrowLeft') n.x -= step;
-    if (ev.key === 'ArrowRight') n.x += step;
+    for (const n of ns) {
+      if (ev.key === 'ArrowUp') n.y -= step;
+      if (ev.key === 'ArrowDown') n.y += step;
+      if (ev.key === 'ArrowLeft') n.x -= step;
+      if (ev.key === 'ArrowRight') n.x += step;
+    }
     commitDebounced();
     renderCanvasOnly();
   }
@@ -918,7 +1172,7 @@ function addNodeAt(x, y) {
     rows: [],
   };
   doc().nodes.push(n);
-  selection = { type: 'node', id: n.id };
+  selection = { type: 'node', ids: [n.id] };
   panelFor = null;
   commit();
   renderAll();
@@ -1057,10 +1311,50 @@ $('#exportPng').addEventListener('click', () => {
   img.src = url;
 });
 
+$('#exportJson').addEventListener('click', () => {
+  const d = doc();
+  const data = JSON.stringify(
+    { app: 'diagramb', name: d.name, nodes: d.nodes, edges: d.edges }, null, 2
+  );
+  downloadBlob(new Blob([data], { type: 'application/json' }), fileSlug() + '.json');
+});
+
+$('#importJson').addEventListener('click', () => $('#importFile').click());
+
+$('#importFile').addEventListener('change', (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const p = JSON.parse(reader.result);
+      if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) {
+        throw new Error('el archivo no tiene nodos y flechas');
+      }
+      const d = newDoc(p.name || file.name.replace(/\.json$/i, '') || 'Importado');
+      d.nodes = p.nodes;
+      d.edges = p.edges;
+      store.docs[d.id] = d;
+      store.current = d.id;
+      selection = null;
+      panelFor = null;
+      resetHistory();
+      saveStore();
+      renderAll();
+      fitView();
+    } catch (err) {
+      alert('No se pudo importar el JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
 /* ============================== inicio ============================== */
 
 loadStore();
-buildSwatches();
+buildSwatches('#pColors');
+buildSwatches('#pColorsMulti');
 resetHistory();
 renderAll();
 window.addEventListener('resize', renderGuides);
@@ -1073,6 +1367,8 @@ window.__diagramb = {
   undo,
   redo,
   renderAll,
+  copySelection,
+  pasteClipboard,
 };
 
 })();

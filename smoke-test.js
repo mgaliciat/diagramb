@@ -1,7 +1,16 @@
 // Prueba de humo: simula interacciones reales y vuelca los resultados en #smokeResult.
+// El portapapeles del sistema se sustituye por un stub: en headless el prompt de
+// permiso congela la página, y así además se prueba la ruta de respaldo en memoria.
+Object.defineProperty(navigator, 'clipboard', {
+  value: {
+    writeText: () => Promise.resolve(),
+    readText: () => Promise.reject(new Error('stub')),
+  },
+});
+
 window.addEventListener('load', () => setTimeout(runSmoke, 50));
 
-function runSmoke() {
+async function runSmoke() {
   const out = [];
   const ok = (name, cond) => out.push((cond ? 'PASS' : 'FAIL') + ' ' + name);
   const api = window.__diagramb;
@@ -33,7 +42,7 @@ function runSmoke() {
     pe('pointermove', canvas, cx + 80, cy + 60);
     pe('pointerup', canvas, cx + 80, cy + 60);
     ok('arrastrar nodo lo mueve', Math.abs(n.x - (x0 + 80)) < 10 && Math.abs(n.y - (y0 + 60)) < 10);
-    ok('arrastrar selecciona el nodo', api.selection && api.selection.id === n.id);
+    ok('arrastrar selecciona el nodo', api.selection && api.selection.ids.includes(n.id));
 
     // --- deshacer el arrastre ---
     api.undo();
@@ -65,6 +74,62 @@ function runSmoke() {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
     ok('Backspace borra la selección (flecha)', api.doc.edges.length === edgesBefore && api.doc.nodes.length === nodesBefore);
 
+    // --- selección múltiple con marquee (shift+arrastre en el fondo) ---
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const m of api.doc.nodes) {
+      minX = Math.min(minX, m.x); minY = Math.min(minY, m.y);
+      maxX = Math.max(maxX, m.x + 200); maxY = Math.max(maxY, m.y + 80);
+    }
+    const [m0x, m0y] = toClient(minX - 20, minY - 20);
+    const [m1x, m1y] = toClient(maxX + 20, maxY + 20);
+    pe('pointerdown', canvas, m0x, m0y, { shiftKey: true });
+    pe('pointermove', canvas, m1x, m1y, { shiftKey: true });
+    pe('pointerup', canvas, m1x, m1y, { shiftKey: true });
+    const all = api.doc.nodes.length;
+    ok('marquee selecciona todos los nodos',
+      api.selection && api.selection.type === 'node' && api.selection.ids.length === all);
+    ok('panel múltiple visible', !document.getElementById('panelMulti').hidden);
+
+    // --- arrastre en grupo ---
+    const p1 = api.doc.nodes[0], p2 = api.doc.nodes[1];
+    const g1 = { x: p1.x, y: p1.y }, g2 = { x: p2.x, y: p2.y };
+    const rect1 = document.querySelector(`g.node[data-id="${p1.id}"] rect`);
+    const [d0x, d0y] = toClient(p1.x + 30, p1.y + 20);
+    pe('pointerdown', rect1, d0x, d0y);
+    pe('pointermove', canvas, d0x + 100, d0y);
+    pe('pointerup', canvas, d0x + 100, d0y);
+    ok('arrastre en grupo mueve todos',
+      Math.abs(p1.x - (g1.x + 100)) < 10 && Math.abs(p2.x - (g2.x + 100)) < 10 && p2.y === g2.y);
+
+    // --- clic simple colapsa la selección múltiple ---
+    const rect1b = document.querySelector(`g.node[data-id="${p1.id}"] rect`);
+    const [c1x, c1y] = toClient(p1.x + 30, p1.y + 20);
+    pe('pointerdown', rect1b, c1x, c1y);
+    pe('pointerup', canvas, c1x, c1y);
+    ok('clic colapsa selección múltiple a un nodo',
+      api.selection && api.selection.type === 'node' && api.selection.ids.length === 1);
+
+    // --- copiar / pegar ---
+    const beforePaste = api.doc.nodes.length;
+    api.copySelection();
+    await api.pasteClipboard();
+    ok('pegar agrega una copia', api.doc.nodes.length === beforePaste + 1);
+    const pasted = api.doc.nodes[api.doc.nodes.length - 1];
+    ok('la copia conserva el contenido',
+      pasted.title === p1.title && pasted.id !== p1.id && pasted.x === p1.x + 24);
+
+    // --- edición inline ---
+    const titleEl = document.querySelector(`g.node[data-id="${pasted.id}"] text[data-edit-field="title"]`);
+    titleEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    const inline = document.querySelector('.inline-edit');
+    ok('doble clic abre editor inline', !!inline);
+    if (inline) {
+      inline.value = 'editado inline';
+      inline.dispatchEvent(new Event('input', { bubbles: true }));
+      inline.dispatchEvent(new FocusEvent('blur'));
+      ok('editor inline guarda el texto', pasted.title === 'editado inline');
+    }
+
     // --- exportación ---
     const exp = api.buildExportSvg();
     ok('export genera SVG', !!exp && exp.w > 100 && exp.h > 100);
@@ -81,7 +146,7 @@ function runSmoke() {
       report(out);
     }, 400);
   } catch (err) {
-    out.push('ERROR ' + err.message);
+    out.push('ERROR ' + err.message + ' @ ' + (err.stack || '').split('\n')[1]);
     report(out);
   }
 }

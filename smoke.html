@@ -20,6 +20,9 @@
     <button id="addNode" class="btn primary">＋ Nodo</button>
     <button id="exportSvg" class="btn">SVG</button>
     <button id="exportPng" class="btn">PNG</button>
+    <button id="exportJson" class="btn">JSON</button>
+    <button id="importJson" class="btn">Importar</button>
+    <input id="importFile" type="file" accept="application/json,.json" hidden>
   </div>
 </header>
 
@@ -63,6 +66,12 @@
       <button id="pDeleteNode" class="btn tiny danger">Eliminar</button>
     </div>
   </div>
+  <div id="panelMulti" hidden>
+    <div class="field"><span id="pMultiCount">nodos seleccionados</span><div id="pColorsMulti" class="swatches"></div></div>
+    <div class="panel-actions">
+      <button id="pDeleteMulti" class="btn tiny danger">Eliminar selección</button>
+    </div>
+  </div>
   <div id="panelEdge" hidden>
     <label class="field"><span>Etiqueta de la flecha</span><input id="pLabel" type="text" spellcheck="false"></label>
     <div class="panel-actions">
@@ -78,7 +87,7 @@
   <button id="zoomFit" class="icon-btn" title="Ajustar al contenido">⤢</button>
 </div>
 
-<div id="hint">doble clic: nuevo nodo · arrastra desde un puerto azul para conectar · ⌫ borrar · ⌘Z deshacer · rueda: mover · ⌘+rueda: zoom</div>
+<div id="hint">doble clic: nuevo nodo / editar texto · puerto azul: conectar · ⇧+arrastre: selección múltiple · ⌘C/⌘V copiar y pegar · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom</div>
 
 <script src="app.js"></script><script src="smoke-test.js"></script>
 </body>
