@@ -23,7 +23,6 @@ const FONT_MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 const F_TITLE = `600 15px ${FONT_SANS}`;
 const F_SUB = `400 13px ${FONT_SANS}`;
-const F_ROW = `400 12.5px ${FONT_MONO}`;
 
 const PALETTES = {
   slate:   { bg: '#4d4d47', title: '#ffffff', sub: '#b9b9b1', val: '#e9e9e3' },
@@ -65,6 +64,34 @@ function textWidth(str, font) {
   return measureCtx.measureText(str || '').width;
 }
 
+/* ---------- markdown ligero en celdas: **negritas** y `código` ---------- */
+
+const CODE_PAD = 4; // relleno horizontal del fondo de `código`
+
+function parseInline(str) {
+  const tokens = [];
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(str))) {
+    if (m.index > last) tokens.push({ t: str.slice(last, m.index) });
+    if (m[1] != null) tokens.push({ t: m[1], bold: true });
+    else tokens.push({ t: m[2], code: true });
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) tokens.push({ t: str.slice(last) });
+  return tokens;
+}
+
+function measureCell(str) {
+  let w = 0;
+  for (const tok of parseInline(str || '')) {
+    w += textWidth(tok.t, `${tok.bold ? 700 : 400} 12.5px ${FONT_MONO}`);
+    if (tok.code) w += CODE_PAD * 2;
+  }
+  return w;
+}
+
 // Calcula tamaño y disposición interna de un nodo a partir de su contenido.
 function nodeSize(n) {
   const rows = (n.rows || []).filter((r) => r[0] || r[1]);
@@ -80,8 +107,8 @@ function nodeSize(n) {
   let keyColW = 0;
   let valColW = 0;
   for (const [k, v] of rows) {
-    keyColW = Math.max(keyColW, textWidth(k, F_ROW));
-    valColW = Math.max(valColW, textWidth(v, F_ROW));
+    keyColW = Math.max(keyColW, measureCell(k));
+    valColW = Math.max(valColW, measureCell(v));
   }
   const colGap = 48;
   const w = clamp(
@@ -132,9 +159,9 @@ function seedDoc() {
   const a = mk(430, 60, 'rest-ops-partner-assign', 'origen de la petición', 'slate');
   const b = mk(250, 200, 'Endpoints interceptados · iteración 1',
     'PUT · /api/ms/order-modification/{endpoint}/{orderId}', 'indigo', [
-      ['endpoint', 'acción interna'],
-      ['hold_partner_assign', 'NOTIFY_ORDER_HOLD'],
-      ['assign_to_partner_v2', 'ASSIGN_TO_PARTNER'],
+      ['**endpoint**', '**acción interna**'],
+      ['`hold_partner_assign`', 'NOTIFY_ORDER_HOLD'],
+      ['`assign_to_partner_v2`', 'ASSIGN_TO_PARTNER'],
     ]);
   const c = mk(440, 450, 'assign-gateway', 'obtiene store_id', 'indigo');
   const e = mk(437, 580, '¿Tienda migrada?', 'consulta en Statsig', 'amber');
@@ -365,6 +392,47 @@ function addText(parent, str, x, y, opts) {
   return t;
 }
 
+// Texto de celda con markdown ligero: **negritas** y `código` (con fondo).
+// Las posiciones de cada segmento se calculan a mano para que coincidan
+// con el ancho medido y soporten alineación a la derecha.
+function addCellText(parent, str, x, y, opts) {
+  const tokens = parseInline(str || '');
+  const rich = tokens.some((tok) => tok.bold || tok.code);
+  if (!rich) {
+    return addText(parent, str, x, y, {
+      fill: opts.fill, size: 12.5, mono: true, anchor: opts.anchor,
+    });
+  }
+  const advances = tokens.map((tok) =>
+    textWidth(tok.t, `${tok.bold ? 700 : 400} 12.5px ${FONT_MONO}`) +
+    (tok.code ? CODE_PAD * 2 : 0));
+  const total = advances.reduce((a, b) => a + b, 0);
+  let cursor = opts.anchor === 'end' ? x - total
+    : opts.anchor === 'middle' ? x - total / 2 : x;
+  const starts = tokens.map((_, i) => {
+    const s = cursor;
+    cursor += advances[i];
+    return s;
+  });
+  tokens.forEach((tok, i) => {
+    if (!tok.code) return;
+    el('rect', {
+      x: starts[i], y: y - 11.5, width: advances[i], height: 15.5, rx: 4,
+      fill: 'rgba(255, 255, 255, 0.13)',
+    }, parent);
+  });
+  const t = el('text', {
+    y, fill: opts.fill, 'font-family': FONT_MONO,
+    'font-size': 12.5, 'text-anchor': 'start',
+  }, parent);
+  tokens.forEach((tok, i) => {
+    const span = el('tspan', { x: starts[i] + (tok.code ? CODE_PAD : 0), y }, t);
+    if (tok.bold) span.setAttribute('font-weight', 700);
+    span.textContent = tok.t;
+  });
+  return t;
+}
+
 function renderNode(n, opts = {}) {
   const s = sizes[n.id];
   const pal = PALETTES[n.color] || PALETTES.slate;
@@ -408,10 +476,9 @@ function renderNode(n, opts = {}) {
     for (const row of s.rows) {
       y += 22;
       const ri = n.rows.indexOf(row);
-      editable.push([addText(g, row[0], PAD_X, y,
-        { fill: pal.sub, size: 12.5, mono: true }), 'row', ri, 0]);
-      editable.push([addText(g, row[1], valX, y,
-        { fill: pal.val, size: 12.5, mono: true, anchor: 'end' }), 'row', ri, 1]);
+      editable.push([addCellText(g, row[0], PAD_X, y, { fill: pal.sub }), 'row', ri, 0]);
+      editable.push([addCellText(g, row[1], valX, y,
+        { fill: pal.val, anchor: 'end' }), 'row', ri, 1]);
     }
   }
 
@@ -1094,12 +1161,14 @@ canvas.addEventListener('pointerup', (ev) => {
 });
 
 canvas.addEventListener('dblclick', (ev) => {
-  if (ev.target.dataset && ev.target.dataset.editNode) {
-    startInlineEdit(ev.target);
+  const tNode = ev.target.closest ? ev.target.closest('text[data-edit-node]') : null;
+  if (tNode) {
+    startInlineEdit(tNode);
     return;
   }
-  if (ev.target.dataset && ev.target.dataset.editEdge) {
-    const e = getEdge(ev.target.dataset.editEdge);
+  const tEdge = ev.target.closest ? ev.target.closest('text[data-edit-edge]') : null;
+  if (tEdge) {
+    const e = getEdge(tEdge.dataset.editEdge);
     if (e) startEdgeLabelEdit(e);
     return;
   }

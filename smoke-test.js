@@ -168,6 +168,22 @@ async function runSmoke() {
     const dec = await api.inflateFromB64(enc);
     ok('compartir codifica y decodifica', dec === 'diagramb ✓ áéí');
 
+    // --- markdown en celdas ---
+    const tableNode = api.doc.nodes.find((nn) => nn.rows && nn.rows.length);
+    if (tableNode) {
+      tableNode.rows[0][1] = 'usa **fuerte** y `cod`';
+      api.renderAll();
+      const sel = `g.node[data-id="${tableNode.id}"]`;
+      const boldSpan = document.querySelector(`${sel} text tspan[font-weight="700"]`);
+      ok('markdown: **negrita** renderiza en bold', !!boldSpan && boldSpan.textContent === 'fuerte');
+      ok('markdown: `código` tiene fondo', !!document.querySelector(`${sel} rect[rx="4"]`));
+      const cellText = [...document.querySelectorAll(`${sel} text`)]
+        .map((t) => t.textContent).join(' ');
+      ok('markdown: los marcadores no se muestran', !cellText.includes('**') && !cellText.includes('`'));
+    } else {
+      ok('hay nodo con tabla para markdown', false);
+    }
+
     // --- exportación ---
     const exp = api.buildExportSvg();
     ok('export genera SVG', !!exp && exp.w > 100 && exp.h > 100);
