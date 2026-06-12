@@ -20,6 +20,7 @@ Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subt
 - **Rueda**: desplazar el lienzo · **⌘/Ctrl + rueda**: zoom · arrastrar el fondo también desplaza.
 - **⌫** borrar selección · **⌘Z / ⌘⇧Z** deshacer y rehacer · **flechas** mover los nodos seleccionados (⇧ = pasos de 10).
 - **SVG / PNG** en la barra superior: descarga el canvas recortado al contenido, con fondo blanco (PNG a 2×). **Con nodos seleccionados se exporta solo esa parte** (con sus flechas internas; un hito seleccionado arrastra su línea de tiempo completa) — ideal cuando conviven varios diagramas en el mismo canvas.
+- **Grupos**: todo lo que está unido (nodos conectados por flechas, o una línea de tiempo) es un grupo. Al **pasar el cursor** sobre cualquier elemento aparece un rectángulo punteado alrededor del grupo completo, con un menú **SVG · PNG · JSON** para exportar solo ese grupo; el rectángulo desaparece al salir.
 - **JSON / Importar**: exporta el diagrama actual como archivo `.json` de respaldo, o importa uno como diagrama nuevo.
 - Los diagramas se guardan solos en `localStorage`; el selector de la barra superior permite tener varios, renombrarlos y borrarlos.
 

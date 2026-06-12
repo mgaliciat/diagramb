@@ -33,6 +33,20 @@ async function runSmoke() {
     ok('carga inicial con nodos', d.nodes.length >= 5);
     ok('carga inicial con flechas', d.edges.length >= 5);
 
+    // --- rect de grupo al pasar el cursor ---
+    const hb = d.nodes[1];
+    const hRect = document.querySelector(`g.node[data-id="${hb.id}"] rect`);
+    const [hx, hy] = toClient(hb.x + 10, hb.y + 10);
+    pe('pointermove', hRect, hx, hy);
+    ok('hover sobre un nodo muestra el rect del grupo',
+      document.querySelectorAll('#hoverG rect').length >= 1);
+    ok('el rect del grupo trae menú de exportación',
+      document.querySelectorAll('#hoverG [data-group-export]').length === 3);
+    const [fx, fy] = toClient(hb.x - 4000, hb.y - 4000);
+    pe('pointermove', canvas, fx, fy);
+    ok('el rect del grupo desaparece al salir',
+      document.getElementById('hoverG').children.length === 0);
+
     // --- arrastrar un nodo ---
     const n = d.nodes[0];
     const x0 = n.x, y0 = n.y;

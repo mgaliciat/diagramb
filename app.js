@@ -650,6 +650,7 @@ const worldG = $('#world');
 const edgesG = $('#edgesG');
 const nodesG = $('#nodesG');
 const labelsG = $('#labelsG');
+const hoverG = $('#hoverG');
 const guidesG = $('#guidesG');
 const draftG = $('#draftG');
 const dotsPattern = $('#dots');
@@ -872,7 +873,133 @@ function computeSizes() {
   sizes = {};
   for (const n of doc().nodes) sizes[n.id] = nodeSize(n);
   layoutTimelines();
+  computeGroups();
   computeEdgeGeos();
+}
+
+/* ---------- grupos: cada componente conexo es "una sola cosa" ---------- */
+
+let groupList = [];       // [{ key, ids: Set, bounds }]
+let groupKeyByNode = {};  // nodeId -> key del grupo
+let hoverGroupKey = null; // grupo bajo el cursor (o null)
+
+// Une por flechas y por pertenencia a una línea de tiempo. Solo cuentan como
+// grupo los componentes con 2+ tarjetas o con un eje (un nodo suelto no).
+function computeGroups() {
+  const parent = {};
+  const find = (a) => {
+    while (parent[a] !== a) {
+      parent[a] = parent[parent[a]];
+      a = parent[a];
+    }
+    return a;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  };
+  for (const n of doc().nodes) parent[n.id] = n.id;
+  for (const e of doc().edges) {
+    if (parent[e.from] && parent[e.to]) union(e.from, e.to);
+  }
+  for (const tl of doc().timelines) {
+    const ms = tlMembers(tl.id);
+    for (let i = 1; i < ms.length; i++) union(ms[0].id, ms[i].id);
+  }
+  const byRoot = {};
+  for (const n of doc().nodes) {
+    const r = find(n.id);
+    (byRoot[r] = byRoot[r] || []).push(n);
+  }
+  groupList = [];
+  groupKeyByNode = {};
+  for (const members of Object.values(byRoot)) {
+    if (members.length < 2 && !members[0].tl) continue;
+    const ids = new Set(members.map((n) => n.id));
+    // clave estable: el menor id del componente
+    const key = members.reduce((a, n) => (n.id < a ? n.id : a), members[0].id);
+    groupList.push({ key, ids, bounds: contentBounds(ids) });
+    for (const id of ids) groupKeyByNode[id] = key;
+  }
+}
+
+/* ---------- rect de grupo al pasar el cursor, con menú de exportación ---------- */
+
+const GROUP_PAD = 26;
+
+function renderGroupHover() {
+  hoverG.innerHTML = '';
+  const g = groupList.find((gr) => gr.key === hoverGroupKey);
+  if (!g || !g.bounds) {
+    hoverGroupKey = null;
+    return;
+  }
+  const x = g.bounds.x - GROUP_PAD;
+  const y = g.bounds.y - GROUP_PAD;
+  const w = g.bounds.w + GROUP_PAD * 2;
+  const h = g.bounds.h + GROUP_PAD * 2;
+  el('rect', {
+    x, y, width: w, height: h, rx: 14, fill: 'none',
+    stroke: isDark() ? 'rgba(233, 233, 228, 0.35)' : 'rgba(43, 43, 40, 0.3)',
+    'stroke-width': 1.4, 'stroke-dasharray': '6 5', 'pointer-events': 'none',
+  }, hoverG);
+  // menú de exportación montado sobre la esquina superior derecha
+  const items = [['svg', 'SVG', 42], ['png', 'PNG', 42], ['json', 'JSON', 50]];
+  const bh = 22;
+  let bx = x + w;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const [fmt, label, bw] = items[i];
+    bx -= bw;
+    const btn = el('g', {}, hoverG);
+    btn.dataset.groupExport = fmt;
+    btn.dataset.group = g.key;
+    el('rect', {
+      x: bx, y: y - bh / 2, width: bw, height: bh, rx: 7,
+      fill: isDark() ? '#26262b' : '#ffffff',
+      stroke: isDark() ? '#3a3a41' : '#e3e3de', 'stroke-width': 1,
+    }, btn);
+    addText(btn, label, bx + bw / 2, y + 4, {
+      fill: isDark() ? '#e9e9e4' : '#2b2b28', size: 11.5, weight: 600, anchor: 'middle',
+    });
+    bx -= 6;
+  }
+}
+
+// Grupo bajo el cursor: sobre un elemento lo enciende; mientras el cursor
+// siga dentro del rect (para alcanzar el menú), se mantiene.
+function updateGroupHover(ev) {
+  let key = null;
+  const nodeG = ev.target.closest ? ev.target.closest('g.node') : null;
+  const noteG = ev.target.closest ? ev.target.closest('[data-note-node]') : null;
+  if (nodeG) {
+    key = groupKeyByNode[nodeG.dataset.id] || null;
+  } else if (noteG) {
+    key = groupKeyByNode[noteG.dataset.noteNode] || null;
+  } else if (ev.target.classList && ev.target.classList.contains('edge-hit')) {
+    const e = getEdge(ev.target.dataset.id);
+    if (e) key = groupKeyByNode[e.from] || null;
+  } else if (ev.target.dataset && ev.target.dataset.editEdge) {
+    const e = getEdge(ev.target.dataset.editEdge);
+    if (e) key = groupKeyByNode[e.from] || null;
+  } else if (ev.target.classList && ev.target.classList.contains('tl-hit')) {
+    const first = doc().nodes.find((n) => n.tl === ev.target.dataset.tl);
+    if (first) key = groupKeyByNode[first.id] || null;
+  } else if (hoverGroupKey) {
+    const g = groupList.find((gr) => gr.key === hoverGroupKey);
+    if (g && g.bounds) {
+      const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+      const b = g.bounds;
+      if (wx >= b.x - GROUP_PAD && wx <= b.x + b.w + GROUP_PAD &&
+          wy >= b.y - GROUP_PAD - 16 && wy <= b.y + b.h + GROUP_PAD) {
+        key = hoverGroupKey;
+      }
+    }
+  }
+  if (key !== hoverGroupKey) {
+    hoverGroupKey = key;
+    renderGroupHover();
+  }
 }
 
 function renderGuides() {
@@ -897,6 +1024,7 @@ function renderAll() {
   for (const tl of doc().timelines) renderTimelineAxis(tl, edgesG);
   nodesG.innerHTML = '';
   for (const n of doc().nodes) nodesG.appendChild(renderNode(n));
+  renderGroupHover();
   renderGuides();
   applyViewTransform();
   syncPanel();
@@ -1221,6 +1349,7 @@ function renderCanvasOnly() {
   for (const tl of doc().timelines) renderTimelineAxis(tl, edgesG);
   nodesG.innerHTML = '';
   for (const n of doc().nodes) nodesG.appendChild(renderNode(n));
+  renderGroupHover();
 }
 
 function syncPanel() {
@@ -1460,6 +1589,12 @@ canvas.addEventListener('pointerdown', (ev) => {
     edgeId = ev.target.dataset.editEdge; // clic sobre la etiqueta de la flecha
   }
 
+  // menú del grupo: exportar el componente bajo el cursor
+  const gBtn = ev.target.closest ? ev.target.closest('[data-group-export]') : null;
+  if (gBtn && ev.button === 0) {
+    exportGroup(gBtn.dataset.groupExport, gBtn.dataset.group);
+    return;
+  }
   if (portEl && ev.button === 0) {
     mode = { type: 'connect', from: portEl.dataset.node, side: portEl.dataset.side, target: null };
     canvas.classList.add('connecting');
@@ -1540,7 +1675,10 @@ canvas.addEventListener('pointerdown', (ev) => {
 });
 
 canvas.addEventListener('pointermove', (ev) => {
-  if (!mode) return;
+  if (!mode) {
+    updateGroupHover(ev);
+    return;
+  }
   if (mode.type === 'pan') {
     view().x = mode.ox + (ev.clientX - mode.startX);
     view().y = mode.oy + (ev.clientY - mode.startY);
@@ -1712,7 +1850,15 @@ canvas.addEventListener('pointerup', (ev) => {
   if (newEdgeId) showEdgePopup(newEdgeId, ev.clientX, ev.clientY);
 });
 
+canvas.addEventListener('pointerleave', () => {
+  if (hoverGroupKey) {
+    hoverGroupKey = null;
+    renderGroupHover();
+  }
+});
+
 canvas.addEventListener('dblclick', (ev) => {
+  if (ev.target.closest && ev.target.closest('[data-group-export]')) return;
   const tNode = ev.target.closest ? ev.target.closest('text[data-edit-node]') : null;
   if (tNode) {
     startInlineEdit(tNode);
@@ -2483,15 +2629,15 @@ const exportSelectionIds = () =>
   selection && selection.type === 'node' && selection.ids.length
     ? new Set(selection.ids) : null;
 
-$('#exportSvg').addEventListener('click', () => {
-  const out = buildExportSvg(exportSelectionIds());
+function downloadSvgExport(ids) {
+  const out = buildExportSvg(ids);
   if (!out) { alert('El diagrama está vacío.'); return; }
   const str = new XMLSerializer().serializeToString(out.svg);
   downloadBlob(new Blob([str], { type: 'image/svg+xml' }), fileSlug() + '.svg');
-});
+}
 
-$('#exportPng').addEventListener('click', () => {
-  const out = buildExportSvg(exportSelectionIds());
+function downloadPngExport(ids) {
+  const out = buildExportSvg(ids);
   if (!out) { alert('El diagrama está vacío.'); return; }
   const str = new XMLSerializer().serializeToString(out.svg);
   const url = URL.createObjectURL(new Blob([str], { type: 'image/svg+xml' }));
@@ -2513,16 +2659,33 @@ $('#exportPng').addEventListener('click', () => {
     alert('No se pudo generar el PNG.');
   };
   img.src = url;
-});
+}
 
-$('#exportJson').addEventListener('click', () => {
+// JSON de una parte del canvas (o de todo, con ids = null), importable después.
+function downloadJsonExport(ids) {
   const d = doc();
+  const nodes = d.nodes.filter((n) => !ids || ids.has(n.id));
+  const inc = new Set(nodes.map((n) => n.id));
+  const edges = d.edges.filter((e) => inc.has(e.from) && inc.has(e.to));
+  const timelines = d.timelines.filter((t) => nodes.some((n) => n.tl === t.id));
   const data = JSON.stringify(
-    { app: 'diagramb', name: d.name, nodes: d.nodes, edges: d.edges, timelines: d.timelines },
-    null, 2
+    { app: 'diagramb', name: d.name, nodes, edges, timelines }, null, 2
   );
   downloadBlob(new Blob([data], { type: 'application/json' }), fileSlug() + '.json');
-});
+}
+
+// Exportación desde el menú del rect de grupo.
+function exportGroup(fmt, key) {
+  const g = groupList.find((gr) => gr.key === key);
+  if (!g) return;
+  if (fmt === 'svg') downloadSvgExport(g.ids);
+  else if (fmt === 'png') downloadPngExport(g.ids);
+  else if (fmt === 'json') downloadJsonExport(g.ids);
+}
+
+$('#exportSvg').addEventListener('click', () => downloadSvgExport(exportSelectionIds()));
+$('#exportPng').addEventListener('click', () => downloadPngExport(exportSelectionIds()));
+$('#exportJson').addEventListener('click', () => downloadJsonExport(null));
 
 $('#importJson').addEventListener('click', () => $('#importFile').click());
 

@@ -285,6 +285,8 @@ text.editable { cursor: text; }
 line.tl-hit { cursor: grab; }
 line.tl-hit:active { cursor: grabbing; }
 
+#hoverG [data-group-export] { cursor: pointer; }
+
 .edge-controls { display: flex; flex-direction: column; gap: 7px; }
 
 .seg { display: flex; gap: 5px; }
