@@ -617,6 +617,106 @@ function buildSwatches(containerSel) {
   }
 }
 
+/* ---------- alinear y distribuir la selección múltiple ---------- */
+
+function alignSelection(kind) {
+  const ns = selectedNodes();
+  if (ns.length < 2) return;
+  computeSizes();
+  const left = Math.min(...ns.map((n) => n.x));
+  const right = Math.max(...ns.map((n) => n.x + sizes[n.id].w));
+  const top = Math.min(...ns.map((n) => n.y));
+  const bottom = Math.max(...ns.map((n) => n.y + sizes[n.id].h));
+  for (const n of ns) {
+    const s = sizes[n.id];
+    if (kind === 'left') n.x = left;
+    if (kind === 'centerH') n.x = Math.round((left + right) / 2 - s.w / 2);
+    if (kind === 'right') n.x = right - s.w;
+    if (kind === 'top') n.y = top;
+    if (kind === 'middleV') n.y = Math.round((top + bottom) / 2 - s.h / 2);
+    if (kind === 'bottom') n.y = bottom - s.h;
+  }
+  commit();
+  renderAll();
+}
+
+function distributeSelection(axis) {
+  const ns = selectedNodes();
+  if (ns.length < 3) return;
+  computeSizes();
+  const horiz = axis === 'h';
+  const arr = [...ns].sort((a, b) => (horiz ? a.x - b.x : a.y - b.y));
+  const size = (n) => (horiz ? sizes[n.id].w : sizes[n.id].h);
+  const first = arr[0];
+  const last = arr[arr.length - 1];
+  const start = horiz ? first.x : first.y;
+  const end = (horiz ? last.x : last.y) + size(last);
+  const gap = (end - start - arr.reduce((a, n) => a + size(n), 0)) / (arr.length - 1);
+  let cur = start;
+  for (const n of arr) {
+    if (horiz) n.x = Math.round(cur); else n.y = Math.round(cur);
+    cur += size(n) + gap;
+  }
+  commit();
+  renderAll();
+}
+
+const iconBar = (x, y, w, h) =>
+  `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1" fill="currentColor"/>`;
+const iconLine = (x1, y1, x2, y2) =>
+  `<path d="M${x1} ${y1}L${x2} ${y2}" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`;
+const svgIcon = (inner) => `<svg viewBox="0 0 16 16" width="14" height="14">${inner}</svg>`;
+
+const ALIGN_DEFS = [
+  { k: 'left', title: 'Alinear a la izquierda',
+    icon: iconLine(2, 1.5, 2, 14.5) + iconBar(4, 3, 9, 3.5) + iconBar(4, 9.5, 6, 3.5) },
+  { k: 'centerH', title: 'Centrar horizontalmente',
+    icon: iconLine(8, 1.5, 8, 14.5) + iconBar(3, 3, 10, 3.5) + iconBar(5, 9.5, 6, 3.5) },
+  { k: 'right', title: 'Alinear a la derecha',
+    icon: iconLine(14, 1.5, 14, 14.5) + iconBar(3, 3, 9, 3.5) + iconBar(6, 9.5, 6, 3.5) },
+  { k: 'top', title: 'Alinear arriba',
+    icon: iconLine(1.5, 2, 14.5, 2) + iconBar(3, 4, 3.5, 9) + iconBar(9.5, 4, 3.5, 6) },
+  { k: 'middleV', title: 'Centrar verticalmente',
+    icon: iconLine(1.5, 8, 14.5, 8) + iconBar(3, 3, 3.5, 10) + iconBar(9.5, 5, 3.5, 6) },
+  { k: 'bottom', title: 'Alinear abajo',
+    icon: iconLine(1.5, 14, 14.5, 14) + iconBar(3, 3, 3.5, 9) + iconBar(9.5, 6, 3.5, 6) },
+];
+
+const DIST_DEFS = [
+  { k: 'h', title: 'Distribuir horizontalmente',
+    icon: iconBar(2, 3, 2.5, 10) + iconBar(6.75, 3, 2.5, 10) + iconBar(11.5, 3, 2.5, 10) },
+  { k: 'v', title: 'Distribuir verticalmente',
+    icon: iconBar(3, 2, 10, 2.5) + iconBar(3, 6.75, 10, 2.5) + iconBar(3, 11.5, 10, 2.5) },
+];
+
+function buildAlignControls() {
+  const alignWrap = $('#pAlign');
+  for (const group of [ALIGN_DEFS.slice(0, 3), ALIGN_DEFS.slice(3)]) {
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    for (const d of group) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = d.title;
+      b.dataset.k = d.k;
+      b.innerHTML = svgIcon(d.icon);
+      b.addEventListener('click', () => alignSelection(d.k));
+      seg.appendChild(b);
+    }
+    alignWrap.appendChild(seg);
+  }
+  const distWrap = $('#pDistribute');
+  for (const d of DIST_DEFS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = d.title;
+    b.dataset.k = d.k;
+    b.innerHTML = svgIcon(d.icon);
+    b.addEventListener('click', () => distributeSelection(d.k));
+    distWrap.appendChild(b);
+  }
+}
+
 /* ---------- controles de estilo de flecha (panel y popup) ---------- */
 
 const edgeControlSets = [];
@@ -797,6 +897,9 @@ function syncPanel() {
     syncEdgeControlsAll(e);
   } else if (multi) {
     $('#pMultiCount').textContent = ns.length + ' nodos seleccionados';
+    for (const b of document.querySelectorAll('#pDistribute button')) {
+      b.disabled = ns.length < 3;
+    }
   }
   const uniform = ns.length &&
     ns.every((m) => (m.color || 'slate') === (ns[0].color || 'slate'))
@@ -1524,6 +1627,120 @@ function fitView() {
   saveStore();
 }
 
+/* ============================== auto-layout ============================== */
+
+let animating = false;
+
+// Mueve los nodos suavemente a sus posiciones destino y hace commit al final.
+function animatePositions(targets, duration = 320) {
+  const startPos = {};
+  for (const id of Object.keys(targets)) {
+    const n = getNode(id);
+    if (n) startPos[id] = [n.x, n.y];
+  }
+  animating = true;
+  const t0 = performance.now();
+  const frame = (t) => {
+    const k = Math.min(1, (t - t0) / duration);
+    const e = 1 - Math.pow(1 - k, 3);
+    for (const [id, [tx, ty]] of Object.entries(targets)) {
+      const n = getNode(id);
+      if (!n || !startPos[id]) continue;
+      n.x = Math.round(startPos[id][0] + (tx - startPos[id][0]) * e);
+      n.y = Math.round(startPos[id][1] + (ty - startPos[id][1]) * e);
+    }
+    renderCanvasOnly();
+    if (k < 1) {
+      requestAnimationFrame(frame);
+    } else {
+      animating = false;
+      commit();
+      renderAll();
+    }
+  };
+  requestAnimationFrame(frame);
+}
+
+// Acomoda el diagrama por capas siguiendo las flechas (raíces arriba).
+function autoLayout() {
+  const ns = doc().nodes;
+  if (ns.length < 2 || animating) return;
+  computeSizes();
+  const E = doc().edges.filter((e) =>
+    e.from !== e.to && getNode(e.from) && getNode(e.to));
+
+  // capa de cada nodo: relajación con tope para tolerar ciclos
+  const layer = {};
+  for (const n of ns) layer[n.id] = 0;
+  for (let i = 0; i < ns.length; i++) {
+    let changed = false;
+    for (const e of E) {
+      if (layer[e.to] < layer[e.from] + 1 && layer[e.from] + 1 <= ns.length) {
+        layer[e.to] = layer[e.from] + 1;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  // compactar índices de capa y agrupar
+  const levels = [...new Set(Object.values(layer))].sort((a, b) => a - b);
+  const lmap = new Map(levels.map((v, i) => [v, i]));
+  const rows = levels.map(() => []);
+  for (const n of ns) rows[lmap.get(layer[n.id])].push(n);
+
+  const preds = {};
+  for (const e of E) (preds[e.to] = preds[e.to] || []).push(e.from);
+
+  const HGAP = 60;
+  const VGAP = 90;
+  const oldB = contentBounds();
+  const targets = {};
+  const placedX = {}; // centro x ya asignado, para el promedio de los hijos
+  let y = 0;
+  for (const row of rows) {
+    // posición deseada: promedio de los padres ya colocados (reduce cruces)
+    const desired = new Map();
+    for (const n of row) {
+      const ps = (preds[n.id] || []).filter((id) => placedX[id] != null);
+      desired.set(n.id, ps.length
+        ? ps.reduce((a, id) => a + placedX[id], 0) / ps.length
+        : n.x + sizes[n.id].w / 2);
+    }
+    row.sort((a, b) => desired.get(a.id) - desired.get(b.id) || a.x - b.x);
+    const totalW = row.reduce((a, n) => a + sizes[n.id].w, 0) + HGAP * (row.length - 1);
+    const center = row.reduce((a, n) => a + desired.get(n.id), 0) / row.length;
+    let x = center - totalW / 2;
+    let maxH = 0;
+    for (const n of row) {
+      targets[n.id] = [Math.round(x), Math.round(y)];
+      placedX[n.id] = x + sizes[n.id].w / 2;
+      x += sizes[n.id].w + HGAP;
+      maxH = Math.max(maxH, sizes[n.id].h);
+    }
+    y += maxH + VGAP;
+  }
+
+  // re-centrar el resultado donde estaba el diagrama
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [id, [tx, ty]] of Object.entries(targets)) {
+    x0 = Math.min(x0, tx);
+    y0 = Math.min(y0, ty);
+    x1 = Math.max(x1, tx + sizes[id].w);
+    y1 = Math.max(y1, ty + sizes[id].h);
+  }
+  const dx = Math.round(oldB.x + oldB.w / 2 - (x0 + x1) / 2);
+  const dy = Math.round(oldB.y + oldB.h / 2 - (y0 + y1) / 2);
+  for (const id of Object.keys(targets)) {
+    targets[id][0] += dx;
+    targets[id][1] += dy;
+  }
+
+  animatePositions(targets);
+}
+
+$('#autoLayout').addEventListener('click', autoLayout);
+
 /* ============================== tema ============================== */
 
 const themeToggle = $('#themeToggle');
@@ -1741,6 +1958,7 @@ loadStore();
 ensureEdgeMarkers(canvas.querySelector('defs'));
 buildSwatches('#pColors');
 buildSwatches('#pColorsMulti');
+buildAlignControls();
 buildEdgeControls('#pEdgeControls', selectedEdge);
 buildEdgeControls('#popupEdgeControls', popupEdge);
 applyTheme();
@@ -1753,6 +1971,7 @@ window.addEventListener('resize', renderGuides);
 window.__diagramb = {
   get doc() { return doc(); },
   get selection() { return selection; },
+  get sizes() { return sizes; },
   buildExportSvg,
   undo,
   redo,

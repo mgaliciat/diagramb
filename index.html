@@ -18,6 +18,7 @@
   </div>
   <div class="topbar-right">
     <button id="addNode" class="btn primary">＋ Nodo</button>
+    <button id="autoLayout" class="btn" title="Auto-acomodar el diagrama por capas">Ordenar</button>
     <button id="exportSvg" class="btn">SVG</button>
     <button id="exportPng" class="btn">PNG</button>
     <button id="exportJson" class="btn">JSON</button>
@@ -70,6 +71,8 @@
   </div>
   <div id="panelMulti" hidden>
     <div class="field"><span id="pMultiCount">nodos seleccionados</span><div id="pColorsMulti" class="swatches"></div></div>
+    <div class="field"><span>Alinear</span><div id="pAlign" class="edge-controls"></div></div>
+    <div class="field"><span>Distribuir</span><div id="pDistribute" class="seg"></div></div>
     <div class="panel-actions">
       <button id="pDeleteMulti" class="btn tiny danger">Eliminar selección</button>
     </div>

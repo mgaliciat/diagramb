@@ -168,6 +168,29 @@ async function runSmoke() {
     const dec = await api.inflateFromB64(enc);
     ok('compartir codifica y decodifica', dec === 'diagramb ✓ áéí');
 
+    // --- alinear y distribuir ---
+    let nx0 = Infinity, ny0 = Infinity, nx1 = -Infinity, ny1 = -Infinity;
+    for (const m of api.doc.nodes) {
+      nx0 = Math.min(nx0, m.x); ny0 = Math.min(ny0, m.y);
+      nx1 = Math.max(nx1, m.x + 300); ny1 = Math.max(ny1, m.y + 100);
+    }
+    const [q0x, q0y] = toClient(nx0 - 20, ny0 - 20);
+    const [q1x, q1y] = toClient(nx1 + 20, ny1 + 20);
+    pe('pointerdown', canvas, q0x, q0y, { shiftKey: true });
+    pe('pointermove', canvas, q1x, q1y, { shiftKey: true });
+    pe('pointerup', canvas, q1x, q1y, { shiftKey: true });
+    document.querySelector('#pAlign button[data-k="left"]').click();
+    const selNodes = api.selection.ids.map((id) => api.doc.nodes.find((m) => m.id === id));
+    ok('alinear izquierda iguala x', selNodes.every((m) => m.x === selNodes[0].x));
+    document.querySelector('#pDistribute button[data-k="v"]').click();
+    const byY = [...selNodes].sort((m1, m2) => m1.y - m2.y);
+    const gaps = [];
+    for (let i = 1; i < byY.length; i++) {
+      gaps.push(byY[i].y - (byY[i - 1].y + api.sizes[byY[i - 1].id].h));
+    }
+    ok('distribuir verticalmente empareja huecos',
+      gaps.every((gp) => Math.abs(gp - gaps[0]) <= 1.5));
+
     // --- markdown en celdas ---
     const tableNode = api.doc.nodes.find((nn) => nn.rows && nn.rows.length);
     if (tableNode) {
@@ -192,12 +215,29 @@ async function runSmoke() {
     const str = new XMLSerializer().serializeToString(exp.svg);
     ok('SVG serializa con xmlns', str.startsWith('<svg') && str.includes('http://www.w3.org/2000/svg'));
 
-    // --- persistencia ---
+    // --- persistencia y auto-layout ---
     setTimeout(() => {
       const saved = JSON.parse(localStorage.getItem('diagramb.v1'));
       const cur = saved && saved.docs[saved.current];
       ok('localStorage guarda el diagrama', !!cur && cur.nodes.length === api.doc.nodes.length);
-      report(out);
+
+      document.getElementById('autoLayout').click();
+      setTimeout(() => {
+        const wrong = api.doc.edges.filter((e) => {
+          const f = api.doc.nodes.find((m) => m.id === e.from);
+          const t = api.doc.nodes.find((m) => m.id === e.to);
+          return f && t && t.y <= f.y;
+        });
+        ok('auto-layout: las flechas apuntan hacia abajo', wrong.length === 0);
+        const overlap = api.doc.nodes.some((m1) => api.doc.nodes.some((m2) => {
+          if (m1.id >= m2.id) return false;
+          const s1 = api.sizes[m1.id], s2 = api.sizes[m2.id];
+          return m1.x < m2.x + s2.w && m2.x < m1.x + s1.w &&
+                 m1.y < m2.y + s2.h && m2.y < m1.y + s1.h;
+        }));
+        ok('auto-layout: sin nodos encimados', !overlap);
+        report(out);
+      }, 800);
     }, 400);
   } catch (err) {
     out.push('ERROR ' + err.message + ' @ ' + (err.stack || '').split('\n')[1]);

@@ -284,6 +284,8 @@ text.editable { cursor: text; }
   white-space: nowrap;
 }
 .seg button:hover { background: rgba(61, 139, 253, 0.06); }
+.seg button svg { display: block; margin: 0 auto; }
+.seg button:disabled { opacity: 0.35; cursor: default; }
 .seg button.active {
   border-color: var(--accent);
   color: var(--accent);
