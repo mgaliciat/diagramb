@@ -409,10 +409,33 @@ function hitBoxes(samples, candidates) {
   return hit;
 }
 
+// Punto del trazo, lo más cercano posible al medio, donde la etiqueta
+// cabe sin pisar ninguna tarjeta. Si ninguno queda libre, usa el medio.
+function bestLabelSpot(label, samples, fallback, candidates) {
+  if (!label) return fallback;
+  const w = textWidth(label, `400 12.5px ${FONT_SANS}`) + 12;
+  const fits = (pt) => {
+    const lx = pt[0] - w / 2;
+    const ly = pt[1] - 19;
+    return !candidates.some(({ box }) =>
+      lx < box[0] + box[2] && box[0] < lx + w &&
+      ly < box[1] + box[3] && box[1] < ly + 22);
+  };
+  if (fits(fallback)) return fallback;
+  const mid = (samples.length - 1) / 2;
+  const order = samples
+    .map((p, i) => [Math.abs(i - mid), p])
+    .sort((q, r) => q[0] - r[0]);
+  for (const [, p] of order) {
+    if (fits(p)) return p;
+  }
+  return fallback;
+}
+
 // Ruta de respaldo cuando el arqueo no alcanza: recorre un carril lateral
 // despejado junto a los estorbos y entra al destino por su lado natural.
 // Se amplía iterativamente hasta verificar por muestreo que no toca nada.
-function laneGeometry(p1, p2, nA, nB, axis, candidates, firstHits) {
+function laneGeometry(e, p1, p2, nA, nB, axis, candidates, firstHits) {
   const main = 1 - axis; // eje de avance de la flecha
   const dir = p2[main] >= p1[main] ? 1 : -1;
   const straight = (p1[axis] + p2[axis]) / 2;
@@ -451,11 +474,12 @@ function laneGeometry(p1, p2, nA, nB, axis, candidates, firstHits) {
       cubicSamples(w2, cW2, cB, p2, samples);
       const newHits = hitBoxes(samples, candidates);
       if (!newHits.length) {
+        const center = [(w1[0] + w2[0]) / 2, (w1[1] + w2[1]) / 2];
         return {
           d: `M ${p1[0]} ${p1[1]} C ${cA[0]} ${cA[1]}, ${cW1[0]} ${cW1[1]}, ${w1[0]} ${w1[1]} ` +
             `L ${w2[0]} ${w2[1]} ` +
             `C ${cW2[0]} ${cW2[1]}, ${cB[0]} ${cB[1]}, ${p2[0]} ${p2[1]}`,
-          mid: [(w1[0] + w2[0]) / 2, (w1[1] + w2[1]) / 2],
+          mid: bestLabelSpot(e && e.label, samples, center, candidates),
         };
       }
       let grew = false;
@@ -496,7 +520,8 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
   // curva hacia el costado libre; si no alcanza, se enruta por un carril
   const axis = sideA === 'top' || sideA === 'bottom' ? 0 : 1;
   const candidates = nodeBoxes(a.id, b.id);
-  let hits = hitBoxes(cubicSamples(p1, c1, c2, p2, []), candidates);
+  let samples = cubicSamples(p1, c1, c2, p2, []);
+  let hits = hitBoxes(samples, candidates);
   const firstHits = hits;
   for (let pass = 0; pass < 3 && hits.length; pass++) {
     let lo = Infinity;
@@ -511,10 +536,11 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
     const off = (target - cur) / 0.75;
     c1[axis] += off;
     c2[axis] += off;
-    hits = hitBoxes(cubicSamples(p1, c1, c2, p2, []), candidates);
+    samples = cubicSamples(p1, c1, c2, p2, []);
+    hits = hitBoxes(samples, candidates);
   }
   if (hits.length) {
-    const lane = laneGeometry(p1, p2, nA, nB, axis, candidates, firstHits);
+    const lane = laneGeometry(e, p1, p2, nA, nB, axis, candidates, firstHits);
     if (lane) return lane;
   }
 
@@ -524,7 +550,7 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
   ];
   return {
     d: `M ${p1[0]} ${p1[1]} C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${p2[0]} ${p2[1]}`,
-    mid,
+    mid: bestLabelSpot(e && e.label, samples, mid, candidates),
   };
 }
 
@@ -601,6 +627,7 @@ const canvas = $('#canvas');
 const worldG = $('#world');
 const edgesG = $('#edgesG');
 const nodesG = $('#nodesG');
+const labelsG = $('#labelsG');
 const guidesG = $('#guidesG');
 const draftG = $('#draftG');
 const dotsPattern = $('#dots');
@@ -799,7 +826,8 @@ function renderEdge(edge, opts = {}) {
   if (edge.label) {
     const labelFill = isSel ? '#3d8bfd'
       : colorKey === 'gray' ? '#8a8a83' : EDGE_COLORS[colorKey];
-    const t = addText(g, edge.label, geo.mid[0], geo.mid[1] - 7, {
+    // la etiqueta va en su propia capa, por encima de las tarjetas
+    const t = addText(opts.labelParent || g, edge.label, geo.mid[0], geo.mid[1] - 7, {
       fill: labelFill, size: 12.5, anchor: 'middle',
     });
     t.setAttribute('style',
@@ -840,8 +868,9 @@ function renderGuides() {
 function renderAll() {
   computeSizes();
   edgesG.innerHTML = '';
+  labelsG.innerHTML = '';
   for (const e of doc().edges) {
-    const g = renderEdge(e);
+    const g = renderEdge(e, { labelParent: labelsG });
     if (g) edgesG.appendChild(g);
   }
   if (isTimeline()) renderTimelineAxis(edgesG);
@@ -1163,8 +1192,9 @@ function buildRowsEditor(n) {
 function renderCanvasOnly() {
   computeSizes();
   edgesG.innerHTML = '';
+  labelsG.innerHTML = '';
   for (const e of doc().edges) {
-    const g = renderEdge(e);
+    const g = renderEdge(e, { labelParent: labelsG });
     if (g) edgesG.appendChild(g);
   }
   if (isTimeline()) renderTimelineAxis(edgesG);
@@ -2366,12 +2396,14 @@ function buildExportSvg() {
   el('rect', {
     x: b.x - pad, y: b.y - pad, width: w, height: h, fill: bg,
   }, svg);
+  const labelLayer = el('g', {});
   for (const e of doc().edges) {
-    const g = renderEdge(e, { forExport: true, bg });
+    const g = renderEdge(e, { forExport: true, bg, labelParent: labelLayer });
     if (g) svg.appendChild(g);
   }
   if (isTimeline()) renderTimelineAxis(svg, { bg });
   for (const n of doc().nodes) svg.appendChild(renderNode(n, { forExport: true }));
+  svg.appendChild(labelLayer); // etiquetas encima de las tarjetas
   return { svg, w, h };
 }
 

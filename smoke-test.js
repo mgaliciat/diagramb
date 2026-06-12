@@ -347,6 +347,17 @@ async function runSmoke() {
           };
           ok('las flechas esquivan tarjetas ajenas', !edgeCrosses('avE', 'avB'));
           ok('el carril lateral esquiva estorbos junto al origen', !edgeCrosses('avE2', 'avB2'));
+
+          // la etiqueta vive en la capa superior y se acomoda fuera de tarjetas
+          api.doc.edges.find((e2) => e2.id === 'avE').label = 'etiqueta visible';
+          api.renderAll();
+          const lbl = document.querySelector('#labelsG text[data-edit-edge="avE"]');
+          const nLb = api.doc.nodes.find((m) => m.id === 'avB');
+          const sLb = api.sizes.avB;
+          const lx = lbl ? +lbl.getAttribute('x') : 0;
+          const ly = lbl ? +lbl.getAttribute('y') : 0;
+          ok('la etiqueta queda encima y fuera de las tarjetas', !!lbl &&
+            !(lx >= nLb.x && lx <= nLb.x + sLb.w && ly >= nLb.y && ly <= nLb.y + sLb.h));
           report(out);
         }, 800);
       }, 250);
