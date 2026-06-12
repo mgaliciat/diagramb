@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>diagramb</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="logo"><span class="logo-dot"></span>diagramb</span>
+    <select id="docSelect" title="Diagramas guardados"></select>
+    <input id="docName" type="text" spellcheck="false" title="Nombre del diagrama">
+    <button id="docNew" class="icon-btn" title="Nuevo diagrama">＋</button>
+    <button id="docDelete" class="icon-btn" title="Eliminar diagrama">🗑</button>
+  </div>
+  <div class="topbar-right">
+    <button id="addNode" class="btn primary">＋ Nodo</button>
+    <button id="exportSvg" class="btn">SVG</button>
+    <button id="exportPng" class="btn">PNG</button>
+  </div>
+</header>
+
+<div id="canvasWrap">
+  <svg id="canvas">
+    <defs>
+      <pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse">
+        <circle cx="1.2" cy="1.2" r="1.2" fill="#d6d6d0"></circle>
+      </pattern>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5"
+              markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#9b9b94"></path>
+      </marker>
+      <marker id="arrowSel" viewBox="0 0 10 10" refX="8.5" refY="5"
+              markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#3d8bfd"></path>
+      </marker>
+    </defs>
+    <rect id="dotsBg" width="100%" height="100%" fill="url(#dots)"></rect>
+    <g id="world">
+      <g id="edgesG"></g>
+      <g id="nodesG"></g>
+      <g id="guidesG"></g>
+      <g id="draftG"></g>
+    </g>
+  </svg>
+</div>
+
+<aside id="panel" hidden>
+  <div id="panelNode" hidden>
+    <label class="field"><span>Título</span><input id="pTitle" type="text" spellcheck="false"></label>
+    <label class="field"><span>Subtítulo</span><input id="pSub" type="text" spellcheck="false"></label>
+    <div class="field"><span>Color</span><div id="pColors" class="swatches"></div></div>
+    <div class="field">
+      <span>Tabla</span>
+      <div id="pRows"></div>
+      <button id="pAddRow" class="btn tiny">＋ fila</button>
+    </div>
+    <div class="panel-actions">
+      <button id="pDuplicate" class="btn tiny">Duplicar</button>
+      <button id="pDeleteNode" class="btn tiny danger">Eliminar</button>
+    </div>
+  </div>
+  <div id="panelEdge" hidden>
+    <label class="field"><span>Etiqueta de la flecha</span><input id="pLabel" type="text" spellcheck="false"></label>
+    <div class="panel-actions">
+      <button id="pDeleteEdge" class="btn tiny danger">Eliminar flecha</button>
+    </div>
+  </div>
+</aside>
+
+<div id="zoombar">
+  <button id="zoomOut" class="icon-btn" title="Alejar">−</button>
+  <button id="zoomReset" title="Restablecer zoom">100%</button>
+  <button id="zoomIn" class="icon-btn" title="Acercar">＋</button>
+  <button id="zoomFit" class="icon-btn" title="Ajustar al contenido">⤢</button>
+</div>
+
+<div id="hint">doble clic: nuevo nodo · arrastra desde un puerto azul para conectar · ⌫ borrar · ⌘Z deshacer · rueda: mover · ⌘+rueda: zoom</div>
+
+<script src="app.js"></script>
+</body>
+</html>
