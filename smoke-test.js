@@ -207,6 +207,22 @@ async function runSmoke() {
       ok('hay nodo con tabla para markdown', false);
     }
 
+    // --- nota flotante ---
+    const noteHost = api.doc.nodes[0];
+    noteHost.note = 'una nota de prueba que envuelve en varias líneas para verificar el ancho';
+    api.renderAll();
+    const noteEl = document.querySelector(`[data-note-node="${noteHost.id}"]`);
+    ok('la nota se renderiza junto a la tarjeta', !!noteEl);
+    ok('la nota envuelve el texto en líneas', noteEl && noteEl.querySelectorAll('text').length >= 2);
+    const portsOfHost = document.querySelectorAll(`g.node[data-id="${noteHost.id}"] .port`).length;
+    ok('la nota no agrega puertos', portsOfHost === 4);
+    const expNote = api.buildExportSvg();
+    const expStr = new XMLSerializer().serializeToString(expNote.svg);
+    ok('la nota sale en la exportación', expStr.includes('#fbedb0'));
+    noteHost.note = '';
+    api.renderAll();
+    ok('nota vacía no se renderiza', !document.querySelector(`[data-note-node="${noteHost.id}"]`));
+
     // --- exportación ---
     const exp = api.buildExportSvg();
     ok('export genera SVG', !!exp && exp.w > 100 && exp.h > 100);

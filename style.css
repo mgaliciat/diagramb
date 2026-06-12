@@ -205,6 +205,19 @@ text.editable { cursor: text; }
 }
 .field input[type="text"]:focus { border-color: var(--accent); outline: none; }
 
+.field textarea {
+  width: 100%;
+  font: 13px var(--font);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: #fff;
+  color: var(--text);
+  resize: vertical;
+  min-height: 54px;
+}
+.field textarea:focus { border-color: var(--accent); outline: none; }
+
 .swatches { display: flex; gap: 7px; flex-wrap: wrap; }
 
 .swatch {
@@ -320,6 +333,7 @@ body.dark .btn.danger { color: #ff8a70; }
 body.dark .btn.danger:hover { background: rgba(214, 87, 69, 0.12); }
 body.dark #docSelect,
 body.dark .field input[type="text"],
+body.dark .field textarea,
 body.dark .row-edit input { background: #26262b; border-color: #3a3a41; color: var(--text); }
 body.dark #docName:focus { background: #26262b; }
 body.dark .icon-btn:hover,

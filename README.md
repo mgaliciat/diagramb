@@ -8,6 +8,7 @@ Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subt
 - **Doble clic sobre un texto** (título, subtítulo o celda de tabla): editarlo inline, directamente en el lienzo. Enter guarda, Escape cancela.
 - **Clic** en un nodo o flecha: seleccionar y editar en el panel derecho (título, subtítulo, color, filas de tabla, etiqueta de la flecha).
 - **Markdown ligero en celdas de tabla**: `**negritas**` y `` `código` `` (este último con fondo tipo pill). Los marcadores se escriben tal cual al editar y se ocultan al renderizar.
+- **Notas flotantes**: el campo "Nota" del panel agrega un post-it amarillo a la derecha de la tarjeta. Se mueve con ella y sale en la exportación, pero no tiene puertos ni puede recibir flechas. Doble clic sobre la nota lleva al campo de edición; vaciar el campo la quita.
 - **⇧ + arrastre en el fondo**: selección múltiple por rectángulo. **⇧ + clic** agrega o quita nodos de la selección. El grupo se mueve junto, y el panel permite cambiar el color, **alinear** (izquierda/centro/derecha/arriba/medio/abajo), **distribuir** con espaciado uniforme (3+ nodos) o borrar todo a la vez.
 - **Ordenar** (barra superior): auto-layout por capas siguiendo las flechas — raíces arriba, cada nivel debajo, ramas centradas bajo sus padres — con animación suave. Si no te gusta el resultado, ⌘Z lo revierte.
 - **⌘C / ⌘X / ⌘V**: copiar, cortar y pegar nodos (con las flechas entre ellos), incluso entre diagramas distintos.

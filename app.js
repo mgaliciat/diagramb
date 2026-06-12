@@ -92,16 +92,45 @@ function measureCell(str) {
   return w;
 }
 
+/* ---------- nota flotante junto a la tarjeta ---------- */
+
+const F_NOTE = `400 11.5px ${FONT_SANS}`;
+const NOTE_GAP = 14;       // separación entre la tarjeta y su nota
+const NOTE_TEXT_W = 150;   // ancho máximo del texto antes de envolver
+
+function wrapText(str, font, maxW) {
+  const lines = [];
+  for (const para of String(str).split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const probe = line ? line + ' ' + word : word;
+      if (textWidth(probe, font) <= maxW || !line) line = probe;
+      else { lines.push(line); line = word; }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+function noteLayout(n) {
+  if (!n.note || !n.note.trim()) return null;
+  const lines = wrapText(n.note, F_NOTE, NOTE_TEXT_W);
+  const wMax = Math.max(30, ...lines.map((l) => textWidth(l, F_NOTE)));
+  return { w: Math.ceil(wMax) + 20, h: lines.length * 15 + 14, lines };
+}
+
 // Calcula tamaño y disposición interna de un nodo a partir de su contenido.
 function nodeSize(n) {
   const rows = (n.rows || []).filter((r) => r[0] || r[1]);
   const titleW = textWidth(n.title, F_TITLE);
   const subW = textWidth(n.subtitle, F_SUB);
 
+  const note = noteLayout(n);
+
   if (!rows.length) {
     const w = clamp(Math.max(titleW, subW) + PAD_X * 2 + 8, 170, 620);
     const h = n.subtitle ? 72 : 54;
-    return { w, h, rows, keyColW: 0 };
+    return { w, h, rows, keyColW: 0, note };
   }
 
   let keyColW = 0;
@@ -118,7 +147,7 @@ function nodeSize(n) {
   let h = 16 + 20;                 // padding superior + título
   if (n.subtitle) h += 19;
   h += 12 + rows.length * 22 + 14; // separación + filas + padding inferior
-  return { w, h, rows, keyColW };
+  return { w, h, rows, keyColW, note };
 }
 
 /* ============================== estado ============================== */
@@ -165,6 +194,7 @@ function seedDoc() {
     ]);
   const c = mk(440, 450, 'assign-gateway', 'obtiene store_id', 'indigo');
   const e = mk(437, 580, '¿Tienda migrada?', 'consulta en Statsig', 'amber');
+  d.nodes[d.nodes.length - 1].note = 'El gate vive en Statsig; si cambia el nombre hay que avisar a ops.';
   const f = mk(160, 740, 'order-modification', 'ejecuta el request real', 'teal');
   const g = mk(720, 740, 'No reenvía', 'assign-partners lo maneja', 'slate');
   const h = mk(415, 900, 'Audit assign-partners', 'siempre: migrada o no', 'rust');
@@ -480,6 +510,19 @@ function renderNode(n, opts = {}) {
       editable.push([addCellText(g, row[1], valX, y,
         { fill: pal.val, anchor: 'end' }), 'row', ri, 1]);
     }
+  }
+
+  if (s.note) {
+    // nota adhesiva flotante: solo decorativa, sin puertos ni anclaje de flechas
+    const ng = el('g', { transform: `translate(${s.w + NOTE_GAP} 0)` }, g);
+    el('rect', {
+      width: s.note.w, height: s.note.h, rx: 6,
+      fill: '#fbedb0', stroke: 'rgba(0, 0, 0, 0.12)', 'stroke-width': 1,
+    }, ng);
+    s.note.lines.forEach((line, i) => {
+      addText(ng, line, 10, 16 + i * 15, { fill: '#6b5a14', size: 11.5 });
+    });
+    if (!opts.forExport) ng.dataset.noteNode = n.id;
   }
 
   if (!opts.forExport) {
@@ -890,6 +933,7 @@ function syncPanel() {
     if (panelFor !== key) {
       $('#pTitle').value = n.title || '';
       $('#pSub').value = n.subtitle || '';
+      $('#pNote').value = n.note || '';
       buildRowsEditor(n);
     }
   } else if (e) {
@@ -921,6 +965,13 @@ $('#pSub').addEventListener('input', (ev) => {
   const n = selectedNode();
   if (!n) return;
   n.subtitle = ev.target.value;
+  commitDebounced();
+  renderCanvasOnly();
+});
+$('#pNote').addEventListener('input', (ev) => {
+  const n = selectedNode();
+  if (!n) return;
+  n.note = ev.target.value;
   commitDebounced();
   renderCanvasOnly();
 });
@@ -1284,6 +1335,18 @@ canvas.addEventListener('dblclick', (ev) => {
     }
     return;
   }
+  const noteG = ev.target.closest ? ev.target.closest('[data-note-node]') : null;
+  if (noteG) {
+    const n = getNode(noteG.dataset.noteNode);
+    if (n) {
+      selection = { type: 'node', ids: [n.id] };
+      panelFor = null;
+      renderAll();
+      $('#pNote').focus();
+      $('#pNote').select();
+    }
+    return;
+  }
   const nodeG = ev.target.closest ? ev.target.closest('g.node') : null;
   if (nodeG) {
     const titleEl = nodeG.querySelector('text[data-edit-field="title"]');
@@ -1608,8 +1671,8 @@ function contentBounds() {
     const s = sizes[n.id] || nodeSize(n);
     x0 = Math.min(x0, n.x);
     y0 = Math.min(y0, n.y);
-    x1 = Math.max(x1, n.x + s.w);
-    y1 = Math.max(y1, n.y + s.h);
+    x1 = Math.max(x1, n.x + s.w + (s.note ? NOTE_GAP + s.note.w : 0));
+    y1 = Math.max(y1, n.y + Math.max(s.h, s.note ? s.note.h : 0));
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
