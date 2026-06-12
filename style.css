@@ -252,6 +252,79 @@ text.editable { cursor: text; }
   border-top: 1px solid var(--border);
 }
 
+/* ---------- popup de flecha / controles de estilo ---------- */
+
+#edgePopup {
+  position: fixed;
+  z-index: 40;
+  width: 232px;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+#edgePopup .field { margin-bottom: 10px; }
+#edgePopup #popupDone { width: 100%; }
+
+.edge-controls { display: flex; flex-direction: column; gap: 7px; }
+
+.seg { display: flex; gap: 5px; }
+.seg button {
+  flex: 1;
+  font: 12px var(--font);
+  padding: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg button:hover { background: rgba(61, 139, 253, 0.06); }
+.seg button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(61, 139, 253, 0.1);
+}
+
+.dots { display: flex; gap: 7px; }
+.dot {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.dot.active { border-color: var(--accent); }
+
+/* ---------- tema oscuro ---------- */
+
+body.dark {
+  --bg: #17171a;
+  --surface: rgba(30, 30, 34, 0.88);
+  --border: #36363c;
+  --text: #e9e9e4;
+  --text-dim: #92929a;
+}
+body.dark .btn { background: #26262b; border-color: #3a3a41; color: var(--text); }
+body.dark .btn:hover { background: #303036; }
+body.dark .btn.primary { background: #e9e9e4; border-color: #e9e9e4; color: #17171a; }
+body.dark .btn.primary:hover { background: #ffffff; }
+body.dark .btn.danger { color: #ff8a70; }
+body.dark .btn.danger:hover { background: rgba(214, 87, 69, 0.12); }
+body.dark #docSelect,
+body.dark .field input[type="text"],
+body.dark .row-edit input { background: #26262b; border-color: #3a3a41; color: var(--text); }
+body.dark #docName:focus { background: #26262b; }
+body.dark .icon-btn:hover,
+body.dark #zoomReset:hover { background: #2e2e34; color: var(--text); }
+body.dark #hint { color: #5b5b62; }
+body.dark .swatch.active { box-shadow: 0 0 0 2px #26262b inset; }
+
 /* ---------- zoombar / hint ---------- */
 
 #zoombar {

@@ -69,6 +69,15 @@ async function runSmoke() {
       ok('la flecha conecta los nodos correctos', e.from === a.id && e.to === b.id);
     }
 
+    // --- popup de tipo de flecha ---
+    ok('popup de tipo de flecha aparece', !document.getElementById('edgePopup').hidden);
+    const dashedBtn = [...document.querySelectorAll('#popupEdgeControls .seg button')]
+      .find((btn) => btn.textContent.includes('– – –'));
+    dashedBtn.click();
+    ok('popup aplica estilo punteado', api.doc.edges[api.doc.edges.length - 1].dashed === true);
+    document.getElementById('popupDone').click();
+    ok('popup se cierra con Listo', document.getElementById('edgePopup').hidden);
+
     // --- borrar con teclado ---
     const nodesBefore = api.doc.nodes.length;
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
@@ -129,6 +138,35 @@ async function runSmoke() {
       inline.dispatchEvent(new FocusEvent('blur'));
       ok('editor inline guarda el texto', pasted.title === 'editado inline');
     }
+
+    // --- etiqueta de flecha inline ---
+    const lblEl = document.querySelector('text[data-edit-edge]');
+    if (lblEl) {
+      const edgeId = lblEl.dataset.editEdge;
+      lblEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+      const ein = document.querySelector('.inline-edit');
+      ok('doble clic en etiqueta de flecha abre editor', !!ein);
+      if (ein) {
+        ein.value = 'etiqueta editada';
+        ein.dispatchEvent(new Event('input', { bubbles: true }));
+        ein.dispatchEvent(new FocusEvent('blur'));
+        const edge = api.doc.edges.find((x) => x.id === edgeId);
+        ok('editor inline guarda la etiqueta', edge && edge.label === 'etiqueta editada');
+      }
+    } else {
+      ok('hay etiquetas de flecha para editar', false);
+    }
+
+    // --- modo oscuro ---
+    document.getElementById('themeToggle').click();
+    ok('modo oscuro activa', document.body.classList.contains('dark'));
+    document.getElementById('themeToggle').click();
+    ok('modo claro restaurado', !document.body.classList.contains('dark'));
+
+    // --- compartir: compresión ida y vuelta ---
+    const enc = await api.deflateB64('diagramb ✓ áéí');
+    const dec = await api.inflateFromB64(enc);
+    ok('compartir codifica y decodifica', dec === 'diagramb ✓ áéí');
 
     // --- exportación ---
     const exp = api.buildExportSvg();

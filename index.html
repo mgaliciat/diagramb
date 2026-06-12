@@ -23,6 +23,8 @@
     <button id="exportJson" class="btn">JSON</button>
     <button id="importJson" class="btn">Importar</button>
     <input id="importFile" type="file" accept="application/json,.json" hidden>
+    <button id="shareBtn" class="btn">Compartir</button>
+    <button id="themeToggle" class="icon-btn" title="Tema claro/oscuro">🌙</button>
   </div>
 </header>
 
@@ -74,11 +76,17 @@
   </div>
   <div id="panelEdge" hidden>
     <label class="field"><span>Etiqueta de la flecha</span><input id="pLabel" type="text" spellcheck="false"></label>
+    <div class="field"><span>Estilo</span><div id="pEdgeControls"></div></div>
     <div class="panel-actions">
       <button id="pDeleteEdge" class="btn tiny danger">Eliminar flecha</button>
     </div>
   </div>
 </aside>
+
+<div id="edgePopup" hidden>
+  <div class="field"><span>Tipo de flecha</span><div id="popupEdgeControls"></div></div>
+  <button id="popupDone" class="btn tiny">Listo</button>
+</div>
 
 <div id="zoombar">
   <button id="zoomOut" class="icon-btn" title="Alejar">−</button>
