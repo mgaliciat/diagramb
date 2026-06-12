@@ -321,6 +321,25 @@ async function runSmoke() {
                    m1.y < m2.y + s2.h && m2.y < m1.y + s1.h;
           }));
           ok('auto-layout: sin nodos encimados', !overlap);
+          // una flecha A→C con B atravesada en medio debe arquearse y esquivarla
+          api.doc.nodes.push(
+            { id: 'avA', x: 2000, y: 0, title: 'A', subtitle: '', color: 'slate', rows: [] },
+            { id: 'avB', x: 2000, y: 180, title: 'B', subtitle: '', color: 'slate', rows: [] },
+            { id: 'avC', x: 2000, y: 360, title: 'C', subtitle: '', color: 'slate', rows: [] });
+          api.doc.edges.push({ id: 'avE', from: 'avA', to: 'avC', label: '' });
+          api.renderAll();
+          const v = document.querySelector('path.edge-hit[data-id="avE"]')
+            .getAttribute('d').match(/-?[\d.]+/g).map(Number);
+          const nB = api.doc.nodes.find((m) => m.id === 'avB');
+          const sB = api.sizes.avB;
+          let crosses = false;
+          for (let i = 1; i < 24; i++) {
+            const t = i / 24, u = 1 - t;
+            const px = u * u * u * v[0] + 3 * u * u * t * v[2] + 3 * u * t * t * v[4] + t * t * t * v[6];
+            const py = u * u * u * v[1] + 3 * u * u * t * v[3] + 3 * u * t * t * v[5] + t * t * t * v[7];
+            if (px >= nB.x && px <= nB.x + sB.w && py >= nB.y && py <= nB.y + sB.h) crosses = true;
+          }
+          ok('las flechas esquivan tarjetas ajenas', !crosses);
           report(out);
         }, 800);
       }, 250);

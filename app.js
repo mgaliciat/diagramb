@@ -374,6 +374,28 @@ function computeEdgeGeos() {
   for (const it of ends) edgeGeos[it.e.id] = edgeGeometryFor(it);
 }
 
+// Tarjetas ajenas que la curva atraviesa, como cajas [x, y, w, h] infladas.
+function nodesOnPath(p1, c1, c2, p2, skipA, skipB) {
+  const hits = [];
+  for (const n of doc().nodes) {
+    if (n.id === skipA || n.id === skipB) continue;
+    const s = sizes[n.id];
+    if (!s) continue;
+    const box = [n.x - 6, n.y - 6, s.w + 12, s.h + 12];
+    for (let i = 1; i < 24; i++) {
+      const t = i / 24;
+      const u = 1 - t;
+      const x = u * u * u * p1[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * p2[0];
+      const y = u * u * u * p1[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * p2[1];
+      if (x >= box[0] && x <= box[0] + box[2] && y >= box[1] && y <= box[1] + box[3]) {
+        hits.push(box);
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
 function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
   let p1 = shiftAlongSide(anchorPoint(a, sideA), sideA, offA);
   let p2 = shiftAlongSide(anchorPoint(b, sideB), sideB, offB);
@@ -385,6 +407,27 @@ function edgeGeometryFor({ e, a, b, sideA, sideB, offA, offB }) {
   const k = clamp(dist * 0.38, 36, 150);
   const c1 = [p1[0] + nA[0] * k, p1[1] + nA[1] * k];
   const c2 = [p2[0] + nB[0] * k, p2[1] + nB[1] * k];
+
+  // si el trazo atraviesa tarjetas ajenas, arquea la curva hacia el costado
+  // libre más cercano, en el eje transversal a la dirección de salida
+  const axis = sideA === 'top' || sideA === 'bottom' ? 0 : 1;
+  for (let pass = 0; pass < 3; pass++) {
+    const hits = nodesOnPath(p1, c1, c2, p2, a.id, b.id);
+    if (!hits.length) break;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const box of hits) {
+      lo = Math.min(lo, box[axis]);
+      hi = Math.max(hi, box[axis] + box[axis + 2]);
+    }
+    const cur = (p1[axis] + 3 * c1[axis] + 3 * c2[axis] + p2[axis]) / 8;
+    const target = cur - lo < hi - cur ? lo - 26 : hi + 26;
+    // mover ambos controles desplaza el punto medio 3/4 de lo movido
+    const off = (target - cur) / 0.75;
+    c1[axis] += off;
+    c2[axis] += off;
+  }
+
   const mid = [
     (p1[0] + 3 * c1[0] + 3 * c2[0] + p2[0]) / 8,
     (p1[1] + 3 * c1[1] + 3 * c2[1] + p2[1]) / 8,
@@ -2037,32 +2080,56 @@ function autoLayout() {
   for (const n of ns) rows[lmap.get(layer[n.id])].push(n);
 
   const preds = {};
-  for (const e of E) (preds[e.to] = preds[e.to] || []).push(e.from);
+  const succs = {};
+  for (const e of E) {
+    (preds[e.to] = preds[e.to] || []).push(e.from);
+    (succs[e.from] = succs[e.from] || []).push(e.to);
+  }
 
   const HGAP = 60;
   const VGAP = 90;
   const oldB = contentBounds();
+
+  // varias pasadas de baricentro — bajando se mira a los padres, subiendo a
+  // los hijos — para reducir cruces y centrar cada rama sobre la suya
+  const centers = {};
+  for (const n of ns) centers[n.id] = n.x + sizes[n.id].w / 2;
+  const packRow = (row, desired) => {
+    row.sort((a, b) => desired.get(a.id) - desired.get(b.id) || a.x - b.x);
+    // colocación codiciosa sin encimar y corrimiento del sesgo medio
+    let x = -Infinity;
+    const pos = new Map();
+    for (const n of row) {
+      x = Math.max(desired.get(n.id) - sizes[n.id].w / 2, x);
+      pos.set(n.id, x);
+      x += sizes[n.id].w + HGAP;
+    }
+    let bias = 0;
+    for (const n of row) bias += pos.get(n.id) + sizes[n.id].w / 2 - desired.get(n.id);
+    bias /= row.length;
+    for (const n of row) centers[n.id] = pos.get(n.id) - bias + sizes[n.id].w / 2;
+  };
+  for (let it = 0; it < 4; it++) {
+    const down = it % 2 === 0;
+    const nb = down ? preds : succs;
+    for (const row of down ? rows : [...rows].reverse()) {
+      const desired = new Map();
+      for (const n of row) {
+        const vs = (nb[n.id] || []).map((id) => centers[id]);
+        desired.set(n.id, vs.length
+          ? vs.reduce((a, b) => a + b, 0) / vs.length
+          : centers[n.id]);
+      }
+      packRow(row, desired);
+    }
+  }
+
   const targets = {};
-  const placedX = {}; // centro x ya asignado, para el promedio de los hijos
   let y = 0;
   for (const row of rows) {
-    // posición deseada: promedio de los padres ya colocados (reduce cruces)
-    const desired = new Map();
-    for (const n of row) {
-      const ps = (preds[n.id] || []).filter((id) => placedX[id] != null);
-      desired.set(n.id, ps.length
-        ? ps.reduce((a, id) => a + placedX[id], 0) / ps.length
-        : n.x + sizes[n.id].w / 2);
-    }
-    row.sort((a, b) => desired.get(a.id) - desired.get(b.id) || a.x - b.x);
-    const totalW = row.reduce((a, n) => a + sizes[n.id].w, 0) + HGAP * (row.length - 1);
-    const center = row.reduce((a, n) => a + desired.get(n.id), 0) / row.length;
-    let x = center - totalW / 2;
     let maxH = 0;
     for (const n of row) {
-      targets[n.id] = [Math.round(x), Math.round(y)];
-      placedX[n.id] = x + sizes[n.id].w / 2;
-      x += sizes[n.id].w + HGAP;
+      targets[n.id] = [Math.round(centers[n.id] - sizes[n.id].w / 2), Math.round(y)];
       maxH = Math.max(maxH, sizes[n.id].h);
     }
     y += maxH + VGAP;
