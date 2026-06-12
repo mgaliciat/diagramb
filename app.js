@@ -95,7 +95,9 @@ function measureCell(str) {
 /* ---------- nota flotante junto a la tarjeta ---------- */
 
 const F_NOTE = `400 11.5px ${FONT_SANS}`;
-const NOTE_GAP = 14;       // separación entre la tarjeta y su nota
+const NOTE_OVERLAP = 10;   // cuánto se encima la nota sobre la tarjeta
+const NOTE_LIFT = 10;      // cuánto asoma la nota por encima de la tarjeta
+const NOTE_TILT = 2.5;     // inclinación en grados, como post-it pegado
 const NOTE_TEXT_W = 150;   // ancho máximo del texto antes de envolver
 
 function wrapText(str, font, maxW) {
@@ -415,7 +417,7 @@ function layoutTimeline() {
   ns.forEach((n, i) => {
     const s = sizes[n.id];
     const side = n.side === 'up' || n.side === 'down' ? n.side : (i % 2 ? 'down' : 'up');
-    const effW = s.w + (s.note ? NOTE_GAP + s.note.w : 0);
+    const effW = s.w + (s.note ? s.note.w - NOTE_OVERLAP + 8 : 0);
     let c = prev === null ? 0 : prev + TL_DOT_GAP;
     c = Math.max(c, busyRight[side] + TL_CARD_GAP + s.w / 2);
     cx[n.id] = c;
@@ -593,8 +595,15 @@ function renderNode(n, opts = {}) {
   }
 
   if (s.note) {
-    // nota adhesiva flotante: solo decorativa, sin puertos ni anclaje de flechas
-    const ng = el('g', { transform: `translate(${s.w + NOTE_GAP} 0)` }, g);
+    // nota adhesiva pegada e inclinada sobre la esquina de la tarjeta:
+    // solo decorativa, sin puertos ni anclaje de flechas
+    const ng = el('g', {
+      transform: `translate(${s.w - NOTE_OVERLAP} ${-NOTE_LIFT}) rotate(${NOTE_TILT})`,
+    }, g);
+    el('rect', {
+      x: 3, y: 3, width: s.note.w, height: s.note.h, rx: 6,
+      fill: 'rgba(0, 0, 0, 0.10)',
+    }, ng);
     el('rect', {
       width: s.note.w, height: s.note.h, rx: 6,
       fill: '#fbedb0', stroke: 'rgba(0, 0, 0, 0.12)', 'stroke-width': 1,
@@ -1935,9 +1944,13 @@ function contentBounds() {
   for (const n of ns) {
     const s = sizes[n.id] || nodeSize(n);
     x0 = Math.min(x0, n.x);
-    y0 = Math.min(y0, n.y);
-    x1 = Math.max(x1, n.x + s.w + (s.note ? NOTE_GAP + s.note.w : 0));
-    y1 = Math.max(y1, n.y + Math.max(s.h, s.note ? s.note.h : 0));
+    y0 = Math.min(y0, s.note ? n.y - NOTE_LIFT - 4 : n.y);
+    x1 = Math.max(x1, n.x + s.w + (s.note ? s.note.w - NOTE_OVERLAP + 8 : 0));
+    y1 = Math.max(y1, n.y + s.h);
+    // la inclinación de la nota baja su esquina derecha ~5% de su ancho
+    if (s.note) {
+      y1 = Math.max(y1, n.y - NOTE_LIFT + s.note.h + Math.ceil(s.note.w * 0.05) + 4);
+    }
   }
   if (isTimeline() && tlInfo) {
     x0 = Math.min(x0, tlInfo.x0);
