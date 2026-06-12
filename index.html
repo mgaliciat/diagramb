@@ -18,6 +18,7 @@
   </div>
   <div class="topbar-right">
     <button id="addNode" class="btn primary">＋ Nodo</button>
+    <button id="addTimeline" class="btn" title="Agregar una línea de tiempo al canvas">＋ Timeline</button>
     <button id="autoLayout" class="btn" title="Auto-acomodar el diagrama por capas">Ordenar</button>
     <button id="exportSvg" class="btn">SVG</button>
     <button id="exportPng" class="btn">PNG</button>
@@ -95,11 +96,6 @@
   <button id="popupDone" class="btn tiny">Listo</button>
 </div>
 
-<div id="newDocPopup" hidden>
-  <button id="newFlow" class="btn">Diagrama de flujo</button>
-  <button id="newTimeline" class="btn">Línea de tiempo</button>
-</div>
-
 <div id="zoombar">
   <button id="zoomOut" class="icon-btn" title="Alejar">−</button>
   <button id="zoomReset" title="Restablecer zoom">100%</button>
@@ -107,7 +103,7 @@
   <button id="zoomFit" class="icon-btn" title="Ajustar al contenido">⤢</button>
 </div>
 
-<div id="hint">doble clic: nuevo nodo / editar texto · puerto azul: conectar · ⇧+arrastre: selección múltiple · ⌘C/⌘V copiar y pegar · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom</div>
+<div id="hint">doble clic: nuevo nodo / editar texto · doble clic en un eje: nuevo hito · puerto azul: conectar · ⇧+arrastre: selección múltiple · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom</div>
 
 <script src="app.js"></script>
 </body>

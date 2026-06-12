@@ -169,17 +169,32 @@ const doc = () => store.docs[store.current];
 const view = () => doc().view;
 const getNode = (id) => doc().nodes.find((n) => n.id === id);
 const getEdge = (id) => doc().edges.find((e) => e.id === id);
-const isTimeline = () => doc().type === 'timeline';
+const getTl = (id) => doc().timelines.find((t) => t.id === id);
+// hitos de una línea de tiempo, en el orden del arreglo de nodos
+const tlMembers = (tlId) => doc().nodes.filter((n) => n.tl === tlId);
 
-function newDoc(name, type) {
+function newDoc(name) {
   return {
     id: uid(),
     name,
-    type: type || 'flow',
     nodes: [],
     edges: [],
+    timelines: [], // [{ id, x, y }]: ejes que conviven con el diagrama libre
     view: { x: 0, y: 0, z: 1 },
   };
+}
+
+// Compatibilidad: los documentos viejos tipo 'timeline' se convierten en un
+// canvas normal con una línea de tiempo; los de flujo solo ganan el campo.
+function normalizeDoc(d) {
+  if (!d.timelines) d.timelines = [];
+  if (d.type === 'timeline' && d.nodes.length) {
+    const tl = { id: uid(), x: 0, y: 0 };
+    d.timelines.push(tl);
+    for (const n of d.nodes) n.tl = tl.id;
+  }
+  delete d.type;
+  return d;
 }
 
 function seedDoc() {
@@ -213,17 +228,6 @@ function seedDoc() {
   return d;
 }
 
-// Timeline nuevo con hitos de ejemplo: el orden del arreglo es la secuencia.
-function seedTimeline(name) {
-  const d = newDoc(name, 'timeline');
-  const mk = (title, subtitle, color) =>
-    d.nodes.push({ id: uid(), x: 0, y: 0, title, subtitle, color, rows: [] });
-  mk('Antes', 'cómo era', 'slate');
-  mk('El cambio', 'qué pasó', 'indigo');
-  mk('Después', 'cómo quedó', 'teal');
-  return d;
-}
-
 function loadStore() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -238,6 +242,7 @@ function loadStore() {
     const d = seedDoc();
     store = { current: d.id, docs: { [d.id]: d } };
   }
+  for (const d of Object.values(store.docs)) normalizeDoc(d);
   if (!store.theme) store.theme = 'light';
   if (!store.edgeDefaults) {
     store.edgeDefaults = { dashed: false, both: false, thick: false, color: 'gray' };
@@ -254,13 +259,16 @@ function saveStore() {
 
 /* ============================== historial (deshacer) ============================== */
 
+const snapshot = () =>
+  JSON.stringify({ nodes: doc().nodes, edges: doc().edges, timelines: doc().timelines });
+
 function resetHistory() {
-  history = [JSON.stringify({ nodes: doc().nodes, edges: doc().edges })];
+  history = [snapshot()];
   hIndex = 0;
 }
 
 function commit() {
-  const snap = JSON.stringify({ nodes: doc().nodes, edges: doc().edges });
+  const snap = snapshot();
   if (snap === history[hIndex]) { saveStore(); return; }
   history = history.slice(0, hIndex + 1);
   history.push(snap);
@@ -280,6 +288,7 @@ function restoreSnapshot(snap) {
   const data = JSON.parse(snap);
   doc().nodes = data.nodes;
   doc().edges = data.edges;
+  doc().timelines = data.timelines || [];
   if (selection) {
     if (selection.type === 'node') {
       selection.ids = selection.ids.filter((id) => doc().nodes.some((n) => n.id === id));
@@ -560,64 +569,77 @@ const TL_STEM = 56;      // distancia entre la tarjeta y el eje
 const TL_DOT_GAP = 110;  // separación mínima entre puntos sobre el eje
 const TL_CARD_GAP = 36;  // separación mínima entre tarjetas del mismo lado
 
-let tlInfo = null;    // { cx, sides, x0, x1 } del último layout
+let tlGeos = {};      // por timeline: { cx, sides, x0, x1 } del último layout
 let tlDragId = null;  // hito en arrastre: el layout no le toca la posición
 
-// Coloca los hitos sobre el eje horizontal (y = 0) en el orden del arreglo,
-// alternando arriba/abajo salvo que el hito tenga un lado forzado.
-function layoutTimeline() {
-  tlInfo = null;
-  const ns = doc().nodes;
-  if (!ns.length) return;
-  const cx = {};
-  const sides = {};
-  const busyRight = { up: -Infinity, down: -Infinity }; // borde derecho ocupado por lado
-  let prev = null;
-  ns.forEach((n, i) => {
-    const s = sizes[n.id];
-    const side = n.side === 'up' || n.side === 'down' ? n.side : (i % 2 ? 'down' : 'up');
-    const effW = s.w + (s.note ? s.note.w - NOTE_OVERLAP + 8 : 0);
-    let c = prev === null ? 0 : prev + TL_DOT_GAP;
-    c = Math.max(c, busyRight[side] + TL_CARD_GAP + s.w / 2);
-    cx[n.id] = c;
-    sides[n.id] = side;
-    busyRight[side] = c - s.w / 2 + effW;
-    prev = c;
-    if (n.id !== tlDragId) {
-      n.x = Math.round(c - s.w / 2);
-      n.y = side === 'up' ? -TL_STEM - s.h : TL_STEM;
-    }
-  });
-  tlInfo = {
-    cx, sides,
-    x0: cx[ns[0].id] - 46,
-    x1: cx[ns[ns.length - 1].id] + 72,
-  };
+// Coloca los hitos de cada línea de tiempo sobre su eje horizontal (y = tl.y)
+// a partir de tl.x, en el orden del arreglo de nodos, alternando arriba/abajo
+// salvo que el hito tenga un lado forzado.
+function layoutTimelines() {
+  tlGeos = {};
+  for (const tl of doc().timelines) {
+    const ms = tlMembers(tl.id);
+    if (!ms.length) continue;
+    const cx = {};
+    const sides = {};
+    const busyRight = { up: -Infinity, down: -Infinity }; // borde derecho ocupado por lado
+    let prev = null;
+    ms.forEach((n, i) => {
+      const s = sizes[n.id];
+      const side = n.side === 'up' || n.side === 'down' ? n.side : (i % 2 ? 'down' : 'up');
+      const effW = s.w + (s.note ? s.note.w - NOTE_OVERLAP + 8 : 0);
+      let c = prev === null ? tl.x : prev + TL_DOT_GAP;
+      c = Math.max(c, busyRight[side] + TL_CARD_GAP + s.w / 2);
+      cx[n.id] = c;
+      sides[n.id] = side;
+      busyRight[side] = c - s.w / 2 + effW;
+      prev = c;
+      if (n.id !== tlDragId) {
+        n.x = Math.round(c - s.w / 2);
+        n.y = side === 'up' ? tl.y - TL_STEM - s.h : tl.y + TL_STEM;
+      }
+    });
+    tlGeos[tl.id] = {
+      cx, sides,
+      x0: cx[ms[0].id] - 46,
+      x1: cx[ms[ms.length - 1].id] + 72,
+    };
+  }
 }
 
-// Dibuja el eje con su flecha, el conector de cada hito y su punto de color.
-function renderTimelineAxis(parent, opts = {}) {
-  if (!tlInfo) return;
+// Dibuja un eje con su flecha, el conector de cada hito y su punto de color.
+// En el lienzo agrega además una franja invisible para arrastrar el eje entero.
+function renderTimelineAxis(tl, parent, opts = {}) {
+  const geo = tlGeos[tl.id];
+  if (!geo) return;
   const g = el('g', {}, parent);
   const axis = EDGE_COLORS.gray;
   const bg = opts.bg || canvasBg();
   el('line', {
-    x1: tlInfo.x0, y1: 0, x2: tlInfo.x1, y2: 0,
+    x1: geo.x0, y1: tl.y, x2: geo.x1, y2: tl.y,
     stroke: axis, 'stroke-width': 2, 'stroke-linecap': 'round',
     'marker-end': 'url(#arrow-gray)',
   }, g);
-  for (const n of doc().nodes) {
+  for (const n of tlMembers(tl.id)) {
     const s = sizes[n.id];
-    const c = tlInfo.cx[n.id];
-    const up = tlInfo.sides[n.id] === 'up';
+    const c = geo.cx[n.id];
+    const up = geo.sides[n.id] === 'up';
     el('line', {
-      x1: n.x + s.w / 2, y1: up ? n.y + s.h : n.y, x2: c, y2: 0,
+      x1: n.x + s.w / 2, y1: up ? n.y + s.h : n.y, x2: c, y2: tl.y,
       stroke: axis, 'stroke-width': 1.4,
     }, g);
     const pal = PALETTES[n.color] || PALETTES.slate;
     el('circle', {
-      cx: c, cy: 0, r: 6, fill: pal.bg, stroke: bg, 'stroke-width': 2.5,
+      cx: c, cy: tl.y, r: 6, fill: pal.bg, stroke: bg, 'stroke-width': 2.5,
     }, g);
+  }
+  if (!opts.forExport) {
+    const hit = el('line', {
+      x1: geo.x0, y1: tl.y, x2: geo.x1 + 14, y2: tl.y,
+      stroke: 'transparent', 'stroke-width': 18,
+    }, g);
+    hit.classList.add('tl-hit');
+    hit.dataset.tl = tl.id;
   }
 }
 
@@ -790,8 +812,7 @@ function renderNode(n, opts = {}) {
         fill: 'none', stroke: '#3d8bfd', 'stroke-width': 1.6,
       }, g);
     }
-    // en timelines no hay flechas entre hitos: sin puertos de conexión
-    if (!isTimeline()) for (const side of ['top', 'bottom', 'left', 'right']) {
+    for (const side of ['top', 'bottom', 'left', 'right']) {
       const [px, py] = anchorPoint({ ...n, x: 0, y: 0 }, side);
       const port = el('circle', {
         cx: px, cy: py, r: 5.5,
@@ -850,7 +871,7 @@ function renderEdge(edge, opts = {}) {
 function computeSizes() {
   sizes = {};
   for (const n of doc().nodes) sizes[n.id] = nodeSize(n);
-  if (isTimeline()) layoutTimeline();
+  layoutTimelines();
   computeEdgeGeos();
 }
 
@@ -873,7 +894,7 @@ function renderAll() {
     const g = renderEdge(e, { labelParent: labelsG });
     if (g) edgesG.appendChild(g);
   }
-  if (isTimeline()) renderTimelineAxis(edgesG);
+  for (const tl of doc().timelines) renderTimelineAxis(tl, edgesG);
   nodesG.innerHTML = '';
   for (const n of doc().nodes) nodesG.appendChild(renderNode(n));
   renderGuides();
@@ -1197,7 +1218,7 @@ function renderCanvasOnly() {
     const g = renderEdge(e, { labelParent: labelsG });
     if (g) edgesG.appendChild(g);
   }
-  if (isTimeline()) renderTimelineAxis(edgesG);
+  for (const tl of doc().timelines) renderTimelineAxis(tl, edgesG);
   nodesG.innerHTML = '';
   for (const n of doc().nodes) nodesG.appendChild(renderNode(n));
 }
@@ -1224,18 +1245,20 @@ function syncPanel() {
   } else if (e) {
     if (panelFor !== key) $('#pLabel').value = e.label || '';
     syncEdgeControlsAll(e);
-  } else if (multi) {
+  }
+  const allTl = ns.length > 0 && ns.every((m) => m.tl);
+  if (multi) {
     $('#pMultiCount').textContent = ns.length + ' nodos seleccionados';
-    // en timelines la posición la decide el layout: alinear/distribuir no aplican
-    $('#pAlignField').hidden = isTimeline();
-    $('#pDistField').hidden = isTimeline();
+    // a los hitos los coloca el layout: alinear/distribuir no les aplica
+    $('#pAlignField').hidden = allTl;
+    $('#pDistField').hidden = allTl;
     for (const b of document.querySelectorAll('#pDistribute button')) {
       b.disabled = ns.length < 3;
     }
   }
-  $('#pSideField').hidden = !isTimeline();
-  $('#pSideFieldMulti').hidden = !isTimeline();
-  const sideUniform = isTimeline() && ns.length &&
+  $('#pSideField').hidden = !allTl;
+  $('#pSideFieldMulti').hidden = !allTl;
+  const sideUniform = allTl &&
     ns.every((m) => (m.side || 'auto') === (ns[0].side || 'auto'))
     ? (ns[0].side || 'auto') : null;
   for (const b of document.querySelectorAll('#pSide button, #pSideMulti button')) {
@@ -1292,8 +1315,8 @@ $('#pDuplicate').addEventListener('click', () => {
   if (!n) return;
   const copy = JSON.parse(JSON.stringify(n));
   copy.id = uid();
-  if (isTimeline()) {
-    // el duplicado queda justo después del original en la secuencia
+  if (n.tl) {
+    // un hito duplicado queda justo después del original en su secuencia
     doc().nodes.splice(doc().nodes.indexOf(n) + 1, 0, copy);
   } else {
     copy.x += 30;
@@ -1314,6 +1337,8 @@ function deleteSelection() {
     const ids = new Set(selection.ids);
     doc().nodes = doc().nodes.filter((n) => !ids.has(n.id));
     doc().edges = doc().edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
+    // un eje sin hitos desaparece con ellos
+    doc().timelines = doc().timelines.filter((t) => doc().nodes.some((n) => n.tl === t.id));
   } else {
     doc().edges = doc().edges.filter((e) => e.id !== selection.id);
   }
@@ -1323,9 +1348,6 @@ function deleteSelection() {
 }
 
 /* ============================== documentos ============================== */
-
-const HINT_FLOW = 'doble clic: nuevo nodo / editar texto · puerto azul: conectar · ⇧+arrastre: selección múltiple · ⌘C/⌘V copiar y pegar · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom';
-const HINT_TIMELINE = 'doble clic: nuevo hito / editar texto · arrastrar: reordenar y elegir lado · ←/→ mover en la secuencia · ↑/↓ cambiar de lado · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom';
 
 function syncDocBar() {
   const sel = $('#docSelect');
@@ -1340,9 +1362,6 @@ function syncDocBar() {
   if (document.activeElement !== $('#docName')) {
     $('#docName').value = doc().name;
   }
-  $('#addNode').textContent = isTimeline() ? '＋ Hito' : '＋ Nodo';
-  $('#autoLayout').hidden = isTimeline();
-  $('#hint').textContent = isTimeline() ? HINT_TIMELINE : HINT_FLOW;
 }
 
 $('#docSelect').addEventListener('change', (ev) => {
@@ -1360,13 +1379,8 @@ $('#docName').addEventListener('input', (ev) => {
 });
 $('#docName').addEventListener('blur', syncDocBar);
 
-const newDocPopup = $('#newDocPopup');
-
-function createDoc(type) {
-  const count = Object.keys(store.docs).length + 1;
-  const d = type === 'timeline'
-    ? seedTimeline('Timeline ' + count)
-    : newDoc('Diagrama ' + count);
+$('#docNew').addEventListener('click', () => {
+  const d = newDoc('Diagrama ' + (Object.keys(store.docs).length + 1));
   store.docs[d.id] = d;
   store.current = d.id;
   selection = null;
@@ -1374,34 +1388,7 @@ function createDoc(type) {
   resetHistory();
   saveStore();
   renderAll();
-  if (type === 'timeline') fitView();
-}
-
-$('#docNew').addEventListener('click', () => {
-  if (!newDocPopup.hidden) {
-    newDocPopup.hidden = true;
-    return;
-  }
-  const r = $('#docNew').getBoundingClientRect();
-  newDocPopup.style.left = r.left + 'px';
-  newDocPopup.style.top = (r.bottom + 6) + 'px';
-  newDocPopup.hidden = false;
 });
-
-$('#newFlow').addEventListener('click', () => {
-  newDocPopup.hidden = true;
-  createDoc('flow');
-});
-
-$('#newTimeline').addEventListener('click', () => {
-  newDocPopup.hidden = true;
-  createDoc('timeline');
-});
-
-document.addEventListener('pointerdown', (ev) => {
-  if (newDocPopup.hidden || newDocPopup.contains(ev.target) || ev.target === $('#docNew')) return;
-  newDocPopup.hidden = true;
-}, true);
 
 $('#docDelete').addEventListener('click', () => {
   if (!confirm(`¿Eliminar “${doc().name}”? Esta acción no se puede deshacer.`)) return;
@@ -1495,15 +1482,15 @@ canvas.addEventListener('pointerdown', (ev) => {
       renderAll();
       return;
     }
-    if (isTimeline()) {
-      // en el timeline el arrastre reordena un solo hito
+    if (n.tl) {
+      // un hito se arrastra solo: reordena dentro de su línea de tiempo
       if (!inSel || selection.ids.length > 1) {
         selection = { type: 'node', ids: [n.id] };
         renderAll();
       }
       const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
       tlDragId = n.id;
-      mode = { type: 'dragT', id: n.id, offX: wx - n.x, offY: wy - n.y, moved: false };
+      mode = { type: 'dragT', id: n.id, tl: n.tl, offX: wx - n.x, offY: wy - n.y, moved: false };
       return;
     }
     if (!inSel) {
@@ -1528,6 +1515,15 @@ canvas.addEventListener('pointerdown', (ev) => {
     renderAll();
     mode = null;
     return;
+  }
+  // arrastrar un eje mueve la línea de tiempo completa
+  if (ev.target.classList && ev.target.classList.contains('tl-hit') && ev.button === 0) {
+    const tl = getTl(ev.target.dataset.tl);
+    if (tl) {
+      const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+      mode = { type: 'dragAxis', id: tl.id, ox: tl.x, oy: tl.y, wx, wy, moved: false };
+      return;
+    }
   }
   // fondo: shift = selección por rectángulo; si no, deseleccionar y hacer pan
   if (ev.shiftKey && ev.button === 0) {
@@ -1572,9 +1568,23 @@ canvas.addEventListener('pointermove', (ev) => {
     renderGuides();
     return;
   }
+  if (mode.type === 'dragAxis') {
+    const tl = getTl(mode.id);
+    if (!tl) return;
+    const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
+    const nx = Math.round(mode.ox + wx - mode.wx);
+    const ny = Math.round(mode.oy + wy - mode.wy);
+    if (nx !== tl.x || ny !== tl.y) mode.moved = true;
+    tl.x = nx;
+    tl.y = ny;
+    renderCanvasOnly();
+    return;
+  }
   if (mode.type === 'dragT') {
     const n = getNode(mode.id);
-    if (!n || !tlInfo) return;
+    const tl = getTl(mode.tl);
+    const geo = tlGeos[mode.tl];
+    if (!n || !tl || !geo) return;
     const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
     const nx = Math.round(wx - mode.offX);
     const ny = Math.round(wy - mode.offY);
@@ -1582,19 +1592,22 @@ canvas.addEventListener('pointermove', (ev) => {
     n.x = nx;
     n.y = ny;
     // el lado se elige arrastrando: donde sueltes la tarjeta, ahí se queda
-    if (mode.moved) n.side = ny + sizes[n.id].h / 2 < 0 ? 'up' : 'down';
-    // índice destino según el centro del hito frente a los puntos del resto
+    if (mode.moved) n.side = ny + sizes[n.id].h / 2 < tl.y ? 'up' : 'down';
+    // posición destino según el centro del hito frente a los puntos del resto
     const ns = doc().nodes;
     const center = n.x + sizes[n.id].w / 2;
-    const cur = ns.indexOf(n);
-    const others = ns.filter((m) => m.id !== n.id);
+    const others = tlMembers(mode.tl).filter((m) => m.id !== n.id);
     let idx = others.length;
     for (let i = 0; i < others.length; i++) {
-      if (center < tlInfo.cx[others[i].id]) { idx = i; break; }
+      if (center < geo.cx[others[i].id]) { idx = i; break; }
     }
-    if (idx !== cur) {
-      ns.splice(cur, 1);
-      ns.splice(idx, 0, n);
+    const curPos = others.filter((m) => ns.indexOf(m) < ns.indexOf(n)).length;
+    if (idx !== curPos && others.length) {
+      ns.splice(ns.indexOf(n), 1);
+      const at = idx >= others.length
+        ? ns.indexOf(others[others.length - 1]) + 1
+        : ns.indexOf(others[idx]);
+      ns.splice(at, 0, n);
     }
     renderCanvasOnly();
     return;
@@ -1662,6 +1675,7 @@ canvas.addEventListener('pointerup', (ev) => {
       commit();
     }
   }
+  if (mode.type === 'dragAxis' && mode.moved) commit();
   if (mode.type === 'marquee') {
     const x0 = Math.min(mode.x0, mode.x1), x1 = Math.max(mode.x0, mode.x1);
     const y0 = Math.min(mode.y0, mode.y1), y1 = Math.max(mode.y0, mode.y1);
@@ -1738,8 +1752,9 @@ canvas.addEventListener('dblclick', (ev) => {
     return;
   }
   const [wx, wy] = screenToWorld(ev.clientX, ev.clientY);
-  if (isTimeline()) {
-    addMilestoneAt(wx);
+  // doble clic sobre un eje: insertar un hito en ese punto de la secuencia
+  if (ev.target.classList && ev.target.classList.contains('tl-hit')) {
+    addMilestoneAt(ev.target.dataset.tl, wx);
     return;
   }
   addNodeAt(wx - 95, wy - 27);
@@ -1934,13 +1949,14 @@ async function pasteClipboard() {
     map[n.id] = copy.id = uid();
     copy.x += off;
     copy.y += off;
+    delete copy.tl; // los hitos copiados se pegan como nodos libres
     return copy;
   });
   const newEdges = (payload.edges || [])
     .map((e) => ({ ...e, id: uid(), from: map[e.from], to: map[e.to] }))
     .filter((e) => e.from && e.to);
   doc().nodes.push(...newNodes);
-  if (!isTimeline()) doc().edges.push(...newEdges);
+  doc().edges.push(...newEdges);
   selection = { type: 'node', ids: newNodes.map((n) => n.id) };
   panelFor = null;
   commit();
@@ -1990,8 +2006,8 @@ document.addEventListener('keydown', (ev) => {
   const ns = selectedNodes();
   if (ns.length && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) {
     ev.preventDefault();
-    if (isTimeline()) {
-      // ←/→ mueven el hito en la secuencia; ↑/↓ fuerzan su lado del eje
+    if (ns.every((m) => m.tl)) {
+      // hitos: ←/→ mueven en su secuencia; ↑/↓ fuerzan su lado del eje
       if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
         if (ns.length === 1) moveMilestone(ns[0], ev.key === 'ArrowLeft' ? -1 : 1);
       } else {
@@ -2003,6 +2019,7 @@ document.addEventListener('keydown', (ev) => {
     }
     const step = ev.shiftKey ? 10 : 1;
     for (const n of ns) {
+      if (n.tl) continue; // a los hitos los coloca el layout
       if (ev.key === 'ArrowUp') n.y -= step;
       if (ev.key === 'ArrowDown') n.y += step;
       if (ev.key === 'ArrowLeft') n.x -= step;
@@ -2034,20 +2051,18 @@ function addNodeAt(x, y) {
   $('#pTitle').select();
 }
 
-// Inserta un hito en el punto de la secuencia que corresponde a wx.
-function addMilestoneAt(wx) {
+// Inserta un hito en la línea de tiempo dada, en el punto que corresponde a wx.
+function addMilestoneAt(tlId, wx) {
+  const geo = tlGeos[tlId];
+  if (!geo) return;
   const n = {
-    id: uid(), x: 0, y: 0,
+    id: uid(), x: 0, y: 0, tl: tlId,
     title: 'Nuevo hito', subtitle: 'descripción', color: 'slate', rows: [],
   };
   const ns = doc().nodes;
-  let idx = ns.length;
-  if (tlInfo) {
-    for (let i = 0; i < ns.length; i++) {
-      if (wx < tlInfo.cx[ns[i].id]) { idx = i; break; }
-    }
-  }
-  ns.splice(idx, 0, n);
+  const members = tlMembers(tlId);
+  const after = members.find((m) => wx < geo.cx[m.id]);
+  ns.splice(after ? ns.indexOf(after) : ns.length, 0, n);
   selection = { type: 'node', ids: [n.id] };
   panelFor = null;
   commit();
@@ -2056,26 +2071,44 @@ function addMilestoneAt(wx) {
   $('#pTitle').select();
 }
 
-// Mueve un hito una posición antes o después en la secuencia.
+// Mueve un hito una posición antes o después dentro de su línea de tiempo.
 function moveMilestone(n, delta) {
   const ns = doc().nodes;
-  const i = ns.indexOf(n);
+  const members = tlMembers(n.tl);
+  const i = members.indexOf(n);
   const j = i + delta;
-  if (i < 0 || j < 0 || j >= ns.length) return;
-  ns.splice(i, 1);
-  ns.splice(j, 0, n);
+  if (i < 0 || j < 0 || j >= members.length) return;
+  const other = members[j];
+  ns.splice(ns.indexOf(n), 1);
+  ns.splice(ns.indexOf(other) + (delta > 0 ? 1 : 0), 0, n);
+  commit();
+  renderAll();
+}
+
+// Crea una línea de tiempo nueva con hitos de ejemplo, con el eje en (x, y).
+function addTimelineAt(x, y) {
+  const tl = { id: uid(), x: Math.round(x), y: Math.round(y) };
+  doc().timelines.push(tl);
+  const mk = (title, subtitle, color) =>
+    doc().nodes.push({ id: uid(), x: 0, y: 0, tl: tl.id, title, subtitle, color, rows: [] });
+  mk('Antes', 'cómo era', 'slate');
+  mk('El cambio', 'qué pasó', 'indigo');
+  mk('Después', 'cómo quedó', 'teal');
+  selection = null;
   commit();
   renderAll();
 }
 
 $('#addNode').addEventListener('click', () => {
-  if (isTimeline()) {
-    addMilestoneAt(Infinity);
-    return;
-  }
   const rect = canvas.getBoundingClientRect();
   const [wx, wy] = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
   addNodeAt(wx - 95 + Math.random() * 40 - 20, wy - 27 + Math.random() * 40 - 20);
+});
+
+$('#addTimeline').addEventListener('click', () => {
+  const rect = canvas.getBoundingClientRect();
+  const [wx, wy] = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  addTimelineAt(wx - 260, wy);
 });
 
 function zoomBy(factor) {
@@ -2100,8 +2133,10 @@ $('#zoomReset').addEventListener('click', () => {
 });
 $('#zoomFit').addEventListener('click', fitView);
 
-function contentBounds() {
-  const ns = doc().nodes;
+// Límites del contenido; con `ids` se limita a esos nodos (y a los ejes de
+// las líneas de tiempo que tengan algún hito incluido).
+function contentBounds(ids) {
+  const ns = doc().nodes.filter((n) => !ids || ids.has(n.id));
   if (!ns.length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const n of ns) {
@@ -2115,11 +2150,14 @@ function contentBounds() {
       y1 = Math.max(y1, n.y - NOTE_LIFT + s.note.h + Math.ceil(s.note.w * 0.05) + 4);
     }
   }
-  if (isTimeline() && tlInfo) {
-    x0 = Math.min(x0, tlInfo.x0);
-    x1 = Math.max(x1, tlInfo.x1 + 14); // punta de flecha del eje
-    y0 = Math.min(y0, -10);
-    y1 = Math.max(y1, 10);
+  for (const tl of doc().timelines) {
+    const geo = tlGeos[tl.id];
+    if (!geo) continue;
+    if (ids && !ns.some((n) => n.tl === tl.id)) continue;
+    x0 = Math.min(x0, geo.x0);
+    x1 = Math.max(x1, geo.x1 + 14); // punta de flecha del eje
+    y0 = Math.min(y0, tl.y - 10);
+    y1 = Math.max(y1, tl.y + 10);
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
@@ -2172,12 +2210,14 @@ function animatePositions(targets, duration = 320) {
 }
 
 // Acomoda el diagrama por capas siguiendo las flechas (raíces arriba).
+// Los hitos no participan: a ellos los coloca su línea de tiempo.
 function autoLayout() {
-  const ns = doc().nodes;
-  if (isTimeline() || ns.length < 2 || animating) return;
+  const ns = doc().nodes.filter((n) => !n.tl);
+  if (ns.length < 2 || animating) return;
   computeSizes();
+  const free = new Set(ns.map((n) => n.id));
   const E = doc().edges.filter((e) =>
-    e.from !== e.to && getNode(e.from) && getNode(e.to));
+    e.from !== e.to && free.has(e.from) && free.has(e.to));
 
   // capa de cada nodo: relajación con tope para tolerar ciclos
   const layer = {};
@@ -2208,7 +2248,7 @@ function autoLayout() {
 
   const HGAP = 60;
   const VGAP = 90;
-  const oldB = contentBounds();
+  const oldB = contentBounds(free); // re-centrar solo respecto al diagrama libre
 
   // varias pasadas de baricentro — bajando se mira a los padres, subiendo a
   // los hijos — para reducir cruces y centrar cada rama sobre la suya
@@ -2338,7 +2378,7 @@ $('#shareBtn').addEventListener('click', async () => {
   const d = doc();
   if (!d.nodes.length) { alert('El diagrama está vacío.'); return; }
   const data = await deflateB64(JSON.stringify(
-    { app: 'diagramb', name: d.name, type: d.type, nodes: d.nodes, edges: d.edges }
+    { app: 'diagramb', name: d.name, nodes: d.nodes, edges: d.edges, timelines: d.timelines }
   ));
   const url = location.href.split('#')[0] + '#d=' + data;
   try {
@@ -2358,9 +2398,12 @@ async function handleShareHash() {
     if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) {
       throw new Error('estructura inválida');
     }
-    const d = newDoc(p.name || 'Compartido', p.type === 'timeline' ? 'timeline' : 'flow');
+    const d = newDoc(p.name || 'Compartido');
     d.nodes = p.nodes;
     d.edges = p.edges;
+    d.timelines = p.timelines || [];
+    d.type = p.type;
+    normalizeDoc(d);
     store.docs[d.id] = d;
     store.current = d.id;
     selection = null;
@@ -2376,9 +2419,19 @@ async function handleShareHash() {
 
 /* ============================== exportar ============================== */
 
-function buildExportSvg() {
+// Exporta todo el canvas, o solo los nodos de `onlyIds` (más las flechas
+// internas y las líneas de tiempo completas de los hitos incluidos).
+function buildExportSvg(onlyIds) {
   computeSizes();
-  const b = contentBounds();
+  let ids = null;
+  if (onlyIds && onlyIds.size) {
+    ids = new Set(onlyIds);
+    // un hito arrastra a toda su línea de tiempo: un eje a medias no se entiende
+    const tls = new Set();
+    for (const n of doc().nodes) if (ids.has(n.id) && n.tl) tls.add(n.tl);
+    for (const n of doc().nodes) if (n.tl && tls.has(n.tl)) ids.add(n.id);
+  }
+  const b = contentBounds(ids);
   if (!b) return null;
   const pad = 48;
   const w = Math.ceil(b.w + pad * 2);
@@ -2398,11 +2451,18 @@ function buildExportSvg() {
   }, svg);
   const labelLayer = el('g', {});
   for (const e of doc().edges) {
+    if (ids && !(ids.has(e.from) && ids.has(e.to))) continue;
     const g = renderEdge(e, { forExport: true, bg, labelParent: labelLayer });
     if (g) svg.appendChild(g);
   }
-  if (isTimeline()) renderTimelineAxis(svg, { bg });
-  for (const n of doc().nodes) svg.appendChild(renderNode(n, { forExport: true }));
+  for (const tl of doc().timelines) {
+    if (ids && !doc().nodes.some((n) => n.tl === tl.id && ids.has(n.id))) continue;
+    renderTimelineAxis(tl, svg, { bg, forExport: true });
+  }
+  for (const n of doc().nodes) {
+    if (ids && !ids.has(n.id)) continue;
+    svg.appendChild(renderNode(n, { forExport: true }));
+  }
   svg.appendChild(labelLayer); // etiquetas encima de las tarjetas
   return { svg, w, h };
 }
@@ -2418,15 +2478,20 @@ function downloadBlob(blob, filename) {
 const fileSlug = () =>
   (doc().name || 'diagrama').toLowerCase().replace(/[^a-z0-9á-ú]+/gi, '-').replace(/^-+|-+$/g, '') || 'diagrama';
 
+// Con nodos seleccionados se exporta solo esa parte del canvas.
+const exportSelectionIds = () =>
+  selection && selection.type === 'node' && selection.ids.length
+    ? new Set(selection.ids) : null;
+
 $('#exportSvg').addEventListener('click', () => {
-  const out = buildExportSvg();
+  const out = buildExportSvg(exportSelectionIds());
   if (!out) { alert('El diagrama está vacío.'); return; }
   const str = new XMLSerializer().serializeToString(out.svg);
   downloadBlob(new Blob([str], { type: 'image/svg+xml' }), fileSlug() + '.svg');
 });
 
 $('#exportPng').addEventListener('click', () => {
-  const out = buildExportSvg();
+  const out = buildExportSvg(exportSelectionIds());
   if (!out) { alert('El diagrama está vacío.'); return; }
   const str = new XMLSerializer().serializeToString(out.svg);
   const url = URL.createObjectURL(new Blob([str], { type: 'image/svg+xml' }));
@@ -2453,7 +2518,8 @@ $('#exportPng').addEventListener('click', () => {
 $('#exportJson').addEventListener('click', () => {
   const d = doc();
   const data = JSON.stringify(
-    { app: 'diagramb', name: d.name, type: d.type, nodes: d.nodes, edges: d.edges }, null, 2
+    { app: 'diagramb', name: d.name, nodes: d.nodes, edges: d.edges, timelines: d.timelines },
+    null, 2
   );
   downloadBlob(new Blob([data], { type: 'application/json' }), fileSlug() + '.json');
 });
@@ -2471,10 +2537,12 @@ $('#importFile').addEventListener('change', (ev) => {
       if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) {
         throw new Error('el archivo no tiene nodos y flechas');
       }
-      const d = newDoc(p.name || file.name.replace(/\.json$/i, '') || 'Importado',
-        p.type === 'timeline' ? 'timeline' : 'flow');
+      const d = newDoc(p.name || file.name.replace(/\.json$/i, '') || 'Importado');
       d.nodes = p.nodes;
       d.edges = p.edges;
+      d.timelines = p.timelines || [];
+      d.type = p.type;
+      normalizeDoc(d);
       store.docs[d.id] = d;
       store.current = d.id;
       selection = null;

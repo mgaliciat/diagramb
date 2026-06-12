@@ -232,25 +232,23 @@ async function runSmoke() {
     const str = new XMLSerializer().serializeToString(exp.svg);
     ok('SVG serializa con xmlns', str.startsWith('<svg') && str.includes('http://www.w3.org/2000/svg'));
 
-    // --- línea de tiempo ---
-    const prevDocId = api.doc.id;
-    document.getElementById('docNew').click();
-    ok('popup de nuevo documento aparece', !document.getElementById('newDocPopup').hidden);
-    document.getElementById('newTimeline').click();
-    ok('nuevo timeline con hitos de ejemplo',
-      api.doc.type === 'timeline' && api.doc.nodes.length === 3);
-    const [t0, t1, t2] = api.doc.nodes;
-    ok('los hitos alternan arriba y abajo', t0.y < 0 && t1.y > 0 && t2.y < 0);
+    // --- líneas de tiempo en el mismo canvas ---
+    const nodesBeforeTl = api.doc.nodes.length;
+    document.getElementById('addTimeline').click();
+    ok('crear timeline agrega eje e hitos al canvas',
+      api.doc.timelines.length === 1 && api.doc.nodes.length === nodesBeforeTl + 3);
+    const tl = api.doc.timelines[0];
+    tl.x = 3000;
+    tl.y = 1500; // lejos del diagrama de flujo, para probar sin interferencias
+    api.renderAll();
+    const tlNodes = () => api.doc.nodes.filter((m) => m.tl === tl.id);
+    const [t0, t1, t2] = tlNodes();
+    ok('los hitos alternan arriba y abajo del eje',
+      t0.y < 1500 && t1.y > 1500 && t2.y < 1500);
     ok('los hitos avanzan de izquierda a derecha', t0.x < t1.x && t1.x < t2.x);
-    ok('sin puertos de conexión en los hitos',
-      document.querySelectorAll('g.node .port').length === 0);
-    ok('el eje y los conectores se dibujan',
-      document.querySelectorAll('#edgesG line').length >= 4);
-    ok('un punto sobre el eje por hito',
+    ok('el eje dibuja un punto por hito',
       document.querySelectorAll('#edgesG circle').length === 3);
-    const expTl = api.buildExportSvg();
-    ok('la exportación del timeline incluye el eje',
-      !!expTl && expTl.svg.querySelectorAll('circle').length >= 3);
+    ok('el eje tiene franja de arrastre', !!document.querySelector('line.tl-hit'));
 
     // arrastrar el primer hito más allá del último lo manda al final
     const tRect = document.querySelector(`g.node[data-id="${t0.id}"] rect`);
@@ -259,28 +257,56 @@ async function runSmoke() {
     pe('pointerdown', tRect, tx0, ty0);
     pe('pointermove', canvas, tx1, ty0);
     pe('pointerup', canvas, tx1, ty0);
-    ok('arrastrar un hito lo reordena', api.doc.nodes.indexOf(t0) === 2);
+    ok('arrastrar un hito lo reordena', tlNodes().indexOf(t0) === 2);
 
-    // --- timeline: teclado, vuelta al flujo, persistencia y auto-layout ---
+    // --- timeline: teclado, eje, export parcial, persistencia y auto-layout ---
     setTimeout(() => {
       // ← lo mueve una posición antes en la secuencia (sigue seleccionado)
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
-      ok('flecha izquierda mueve el hito antes', api.doc.nodes.indexOf(t0) === 1);
+      ok('flecha izquierda mueve el hito antes', tlNodes().indexOf(t0) === 1);
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
-      ok('flecha abajo fuerza el lado inferior', t0.side === 'down' && t0.y > 0);
+      ok('flecha abajo fuerza el lado inferior', t0.side === 'down' && t0.y > 1500);
 
       // arrastrar una tarjeta por debajo del eje la cambia de lado
       const tRect2 = document.querySelector(`g.node[data-id="${t2.id}"] rect`);
       const [ux0, uy0] = toClient(t2.x + 30, t2.y + 20);
-      const [ux1, uy1] = toClient(t2.x + 30, 140);
+      const [ux1, uy1] = toClient(t2.x + 30, 1640);
       pe('pointerdown', tRect2, ux0, uy0);
       pe('pointermove', canvas, ux1, uy1);
       pe('pointerup', canvas, ux1, uy1);
-      ok('arrastrar bajo el eje cambia el lado', t2.side === 'down' && t2.y > 0);
+      ok('arrastrar bajo el eje cambia el lado', t2.side === 'down' && t2.y > 1500);
+
+      // arrastrar el eje mueve la línea de tiempo completa
+      const axis = document.querySelector('line.tl-hit');
+      const [ax, ay] = toClient(t1.x + 30, 1500);
+      pe('pointerdown', axis, ax, ay);
+      pe('pointermove', canvas, ax + 150, ay + 80);
+      pe('pointerup', canvas, ax + 150, ay + 80);
+      ok('arrastrar el eje mueve la línea de tiempo',
+        Math.abs(tl.x - 3150) < 2 && Math.abs(tl.y - 1580) < 2);
+
+      // doble clic sobre el eje inserta un hito al final
+      const axis2 = document.querySelector('line.tl-hit');
+      const [ddx, ddy] = toClient(tl.x + 5000, tl.y);
+      axis2.dispatchEvent(new MouseEvent('dblclick',
+        { bubbles: true, cancelable: true, clientX: ddx, clientY: ddy }));
+      ok('doble clic en el eje agrega un hito', tlNodes().length === 4);
+      if (document.activeElement) document.activeElement.blur();
+
+      // exportar solo una parte del canvas
+      const expAll = api.buildExportSvg();
+      const expSel = api.buildExportSvg(new Set([t0.id]));
+      ok('exportar la selección recorta el lienzo', expSel.w < expAll.w);
+      ok('un hito seleccionado exporta su timeline completo',
+        expSel.svg.querySelectorAll('circle').length === 4);
+      const freeNode = api.doc.nodes.find((m) => !m.tl);
+      const expFree = api.buildExportSvg(new Set([freeNode.id]));
+      ok('exportar un nodo libre no incluye ejes',
+        expFree.svg.querySelectorAll('circle').length === 0);
 
       // el control de lado en selección múltiple manda todos al mismo lado
       let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-      for (const m of api.doc.nodes) {
+      for (const m of tlNodes()) {
         bx0 = Math.min(bx0, m.x); by0 = Math.min(by0, m.y);
         bx1 = Math.max(bx1, m.x + 400); by1 = Math.max(by1, m.y + 150);
       }
@@ -289,17 +315,17 @@ async function runSmoke() {
       pe('pointerdown', canvas, r0x, r0y, { shiftKey: true });
       pe('pointermove', canvas, r1x, r1y, { shiftKey: true });
       pe('pointerup', canvas, r1x, r1y, { shiftKey: true });
-      ok('marquee selecciona los hitos', api.selection && api.selection.ids.length === 3);
+      ok('marquee selecciona los hitos', api.selection && api.selection.ids.length === 4);
       ok('control de lado visible en selección múltiple',
         !document.getElementById('pSideFieldMulti').hidden);
       document.querySelector('#pSideMulti button[data-k="up"]').click();
       ok('lado múltiple: todos arriba',
-        api.doc.nodes.every((m) => m.side === 'up' && m.y < 0));
+        tlNodes().every((m) => m.side === 'up' && m.y < tl.y));
 
-      const sel2 = document.getElementById('docSelect');
-      sel2.value = prevDocId;
-      sel2.dispatchEvent(new Event('change', { bubbles: true }));
-      ok('volver al diagrama de flujo', api.doc.id === prevDocId && api.doc.type !== 'timeline');
+      // borrar los hitos elimina también el eje
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
+      ok('borrar los hitos elimina la línea de tiempo',
+        api.doc.timelines.length === 0 && tlNodes().length === 0);
 
       setTimeout(() => {
         const saved = JSON.parse(localStorage.getItem('diagramb.v1'));

@@ -282,23 +282,8 @@ text.editable { cursor: text; }
 #edgePopup .field { margin-bottom: 10px; }
 #edgePopup #popupDone { width: 100%; }
 
-#newDocPopup {
-  position: fixed;
-  z-index: 40;
-  width: 190px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  background: var(--surface);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
-}
-#newDocPopup[hidden] { display: none; }
-#newDocPopup .btn { width: 100%; text-align: left; }
+line.tl-hit { cursor: grab; }
+line.tl-hit:active { cursor: grabbing; }
 
 .edge-controls { display: flex; flex-direction: column; gap: 7px; }
 

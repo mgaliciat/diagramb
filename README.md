@@ -19,18 +19,21 @@ Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subt
 - **Arrastrar un nodo**: moverlo; aparecen guías rosas cuando queda alineado con otro nodo (bordes o centros).
 - **Rueda**: desplazar el lienzo · **⌘/Ctrl + rueda**: zoom · arrastrar el fondo también desplaza.
 - **⌫** borrar selección · **⌘Z / ⌘⇧Z** deshacer y rehacer · **flechas** mover los nodos seleccionados (⇧ = pasos de 10).
-- **SVG / PNG** en la barra superior: descarga el diagrama recortado al contenido, con fondo blanco (PNG a 2×).
+- **SVG / PNG** en la barra superior: descarga el canvas recortado al contenido, con fondo blanco (PNG a 2×). **Con nodos seleccionados se exporta solo esa parte** (con sus flechas internas; un hito seleccionado arrastra su línea de tiempo completa) — ideal cuando conviven varios diagramas en el mismo canvas.
 - **JSON / Importar**: exporta el diagrama actual como archivo `.json` de respaldo, o importa uno como diagrama nuevo.
 - Los diagramas se guardan solos en `localStorage`; el selector de la barra superior permite tener varios, renombrarlos y borrarlos.
 
 ## Líneas de tiempo
 
-El botón **＋** de la barra pregunta el tipo de documento: diagrama de flujo o **línea de tiempo**. Un timeline representa una secuencia (un antes y un después, no necesariamente fechas): los hitos son las mismas tarjetas de siempre (título, subtítulo, color, tabla y nota), conectadas a un eje horizontal con flecha y alternando arriba/abajo automáticamente.
+**＋ Timeline** agrega una línea de tiempo al canvas actual: conviven con los diagramas de flujo (puedes tener varias, y conectar flechas entre nodos libres e hitos). Un timeline representa una secuencia (un antes y un después, no necesariamente fechas): los hitos son las mismas tarjetas de siempre (título, subtítulo, color, tabla y nota), conectadas a un eje horizontal con flecha y alternando arriba/abajo automáticamente.
 
-- **Doble clic** en el lienzo: insertar un hito en ese punto de la secuencia. **＋ Hito** lo agrega al final.
+- **Doble clic sobre el eje**: insertar un hito en ese punto de la secuencia.
 - **Arrastrar un hito**: reordenarlo y **elegir su lado** — suéltalo arriba o abajo del eje y ahí se queda; los demás se abren en vivo para hacerle hueco y al soltar cae en su lugar.
+- **Arrastrar el eje**: mover la línea de tiempo completa por el canvas.
 - **←/→**: mover el hito seleccionado antes o después · **↑/↓**: forzar su lado del eje. El panel tiene el control "Lado" (Auto/Arriba/Abajo), también con **selección múltiple** para mandar varios hitos al mismo lado de golpe; "Auto" vuelve a la alternancia.
-- La posición la decide el layout, así que no hay puertos de conexión, "Ordenar" ni alinear/distribuir; todo lo demás (edición inline, colores, notas, deshacer, exportar, compartir) funciona igual.
+- A los hitos los coloca su eje, así que "Ordenar" y alinear/distribuir no les aplican; borrar todos los hitos elimina el eje. Todo lo demás (edición inline, colores, notas, puertos, deshacer, exportar, compartir) funciona igual que en cualquier tarjeta.
+
+Los documentos guardados con el formato anterior (tipo "timeline") se migran solos al abrir la app.
 
 ## Pruebas
 
