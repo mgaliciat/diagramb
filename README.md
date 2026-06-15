@@ -1,6 +1,10 @@
-# diagramb
+<p align="center">
+  <img src="assets/logo/cartografo-horizontal.svg" alt="Cartógrafo" width="340">
+</p>
 
-Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subtítulo y tablas opcionales), flechas que se acomodan solas y exportación a SVG/PNG. También crea **líneas de tiempo** con las mismas tarjetas sobre un eje. Sin dependencias ni build: abre `index.html` en el navegador.
+# Cartógrafo
+
+Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subtítulo y tablas opcionales), flechas que se acomodan solas y exportación a SVG/PNG. También crea **líneas de tiempo** con las mismas tarjetas sobre un eje. Sin dependencias ni build: abre `index.html` en el navegador. En producción vive en [cartografo.com.mx](https://cartografo.com.mx).
 
 ## Uso
 
@@ -36,6 +40,25 @@ Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subt
 - A los hitos los coloca su eje, así que "Ordenar" y alinear/distribuir no les aplican; borrar todos los hitos elimina el eje. Todo lo demás (edición inline, colores, notas, puertos, deshacer, exportar, compartir) funciona igual que en cualquier tarjeta.
 
 Los documentos guardados con el formato anterior (tipo "timeline") se migran solos al abrir la app.
+
+## Marca
+
+El símbolo es la **«Brújula de nodos»**: funde cartografía (el norte rojo de la brújula) con diagramas (nodos y conexiones) — el cartógrafo que mapea ideas. Paleta: rojos `#f15b6a → #d2353e`, charcoal `#231f20`, tipografía Open Sans. Los assets en SVG viven en [`assets/logo/`](assets/logo/):
+
+| Archivo | Uso |
+| --- | --- |
+| `cartografo-simbolo-color.svg` | Símbolo a color (sobre fondo claro) |
+| `cartografo-simbolo-mono.svg` | Símbolo monocromo charcoal |
+| `cartografo-simbolo-blanco.svg` | Símbolo blanco (sobre fondos oscuros) |
+| `cartografo-horizontal.svg` | Lockup horizontal (símbolo + texto) |
+| `cartografo-vertical.svg` | Lockup vertical |
+| `favicon.svg` | Cuadro redondeado con degradado, optimizado para tamaños chicos |
+
+El favicon (`favicon.svg`, en la raíz) ya está enlazado en `index.html`:
+
+```html
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+```
 
 ## Pruebas
 

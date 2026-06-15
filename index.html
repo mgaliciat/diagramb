@@ -3,14 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>diagramb</title>
+<title>Cartógrafo</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header class="topbar">
   <div class="topbar-left">
-    <span class="logo"><span class="logo-dot"></span>diagramb</span>
+    <span class="logo" title="Cartógrafo">
+      <svg class="logo-mark" viewBox="0 0 64 64" width="24" height="24" aria-label="Cartógrafo" role="img">
+        <defs>
+          <linearGradient id="logoG" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#f15b6a"></stop>
+            <stop offset="1" stop-color="#d2353e"></stop>
+          </linearGradient>
+        </defs>
+        <rect width="64" height="64" rx="14" fill="url(#logoG)"></rect>
+        <g stroke="#fff" stroke-width="4.5" stroke-linecap="round">
+          <line x1="32" y1="32" x2="32" y2="18"></line>
+          <line x1="32" y1="32" x2="46" y2="32"></line>
+          <line x1="32" y1="32" x2="32" y2="46"></line>
+          <line x1="32" y1="32" x2="18" y2="32"></line>
+        </g>
+        <circle cx="46" cy="32" r="4" fill="#fff"></circle>
+        <circle cx="32" cy="46" r="4" fill="#fff"></circle>
+        <circle cx="18" cy="32" r="4" fill="#fff"></circle>
+        <circle cx="32" cy="15" r="6" fill="#fff"></circle>
+        <circle cx="32" cy="32" r="4.5" fill="#d2353e" stroke="#fff" stroke-width="3.5"></circle>
+      </svg>
+      <span class="logo-text">Cartógrafo</span>
+    </span>
     <select id="docSelect" title="Diagramas guardados"></select>
     <input id="docName" type="text" spellcheck="false" title="Nombre del diagrama">
     <button id="docNew" class="icon-btn" title="Nuevo diagrama">＋</button>
@@ -23,6 +46,7 @@
     <button id="exportSvg" class="btn">SVG</button>
     <button id="exportPng" class="btn">PNG</button>
     <button id="exportJson" class="btn">JSON</button>
+    <button id="exportMd" class="btn" title="Exportar a Markdown para usar como contexto en una IA">MD</button>
     <button id="importJson" class="btn">Importar</button>
     <input id="importFile" type="file" accept="application/json,.json" hidden>
     <button id="shareBtn" class="btn">Compartir</button>
