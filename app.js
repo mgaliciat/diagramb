@@ -197,34 +197,72 @@ function normalizeDoc(d) {
   return d;
 }
 
+// Ejemplo por defecto: muestra todas las bondades del editor (tarjetas con
+// tabla y markdown, notas adhesivas, colores, flechas con estilo y una línea
+// de tiempo conviviendo en el mismo canvas) con datos de Pokémon.
 function seedDoc() {
-  const d = newDoc('Mi primer diagrama');
+  const d = newDoc('Pokémon · combate y medallas');
   const mk = (x, y, title, subtitle, color, rows) => {
     const n = { id: uid(), x, y, title, subtitle, color, rows: rows || [] };
     d.nodes.push(n);
     return n.id;
   };
-  const a = mk(430, 60, 'rest-ops-partner-assign', 'origen de la petición', 'slate');
-  const b = mk(250, 200, 'Endpoints interceptados · iteración 1',
-    'PUT · /api/ms/order-modification/{endpoint}/{orderId}', 'indigo', [
-      ['**endpoint**', '**acción interna**'],
-      ['`hold_partner_assign`', 'NOTIFY_ORDER_HOLD'],
-      ['`assign_to_partner_v2`', 'ASSIGN_TO_PARTNER'],
-    ]);
-  const c = mk(440, 450, 'assign-gateway', 'obtiene store_id', 'indigo');
-  const e = mk(437, 580, '¿Tienda migrada?', 'consulta en Statsig', 'amber');
-  d.nodes[d.nodes.length - 1].note = 'El gate vive en Statsig; si cambia el nombre hay que avisar a ops.';
-  const f = mk(160, 740, 'order-modification', 'ejecuta el request real', 'teal');
-  const g = mk(720, 740, 'No reenvía', 'assign-partners lo maneja', 'slate');
-  const h = mk(415, 900, 'Audit assign-partners', 'siempre: migrada o no', 'rust');
-  const link = (from, to, label) => d.edges.push({ id: uid(), from, to, label: label || '' });
-  link(a, b, 'modo dry');
-  link(b, c);
-  link(c, e);
-  link(e, f, 'no migrada');
-  link(e, g, 'migrada');
-  link(f, h);
-  link(g, h);
+  const note = (txt) => { d.nodes[d.nodes.length - 1].note = txt; };
+
+  // ----- Diagrama de flujo: cómo afrontar un combate salvaje -----
+  const a = mk(440, 60, 'Encuentro salvaje', 'hierba alta · Ruta 3', 'forest');
+  note('Los Pokémon salvajes huyen si tu nivel es mucho mayor.');
+  const b = mk(420, 210, '¿De qué tipo es el rival?', 'revísalo en la Pokédex', 'indigo');
+  const tabla = mk(800, 150, 'Tabla de tipos · Charmander', 'ataques de Fuego 🔥', 'amber', [
+    ['**defensor**', '**daño**'],
+    ['`Planta`', '×2 súper eficaz'],
+    ['`Bicho`', '×2 súper eficaz'],
+    ['`Agua`', '×0.5 poco eficaz'],
+    ['`Roca`', '×0.5 poco eficaz'],
+  ]);
+  const c = mk(180, 380, 'Usar Ascuas', 'golpe con ventaja', 'rust');
+  const e = mk(700, 380, 'Cambiar a Squirtle', 'matchup más seguro', 'blue');
+  const f = mk(430, 560, '¿Bajó su vida?', 'apunta a la zona roja', 'indigo');
+  const g = mk(170, 740, 'Lanzar Poké Ball', '¡captura!', 'teal', [
+    ['**Poké Ball**', '×1.0'],
+    ['**Súper Ball**', '×1.5'],
+    ['**Ultra Ball**', '×2.0'],
+  ]);
+  note('Más fácil si está dormido o paralizado.');
+  const h = mk(690, 740, 'Seguir atacando', 'gana experiencia', 'olive');
+
+  const link = (from, to, label, extra) =>
+    d.edges.push(Object.assign({ id: uid(), from, to, label: label || '' }, extra));
+  link(a, b, 'aparece');
+  link(b, tabla, 'consulta', { dashed: true, both: true, color: 'purple' });
+  link(b, c, 'Planta / Bicho', { color: 'green', thick: true });
+  link(b, e, 'Agua / Roca', { color: 'red' });
+  link(c, f);
+  link(e, f);
+  link(f, g, 'sí, debilitado', { color: 'green' });
+  link(f, h, 'aún fuerte', { color: 'red', dashed: true });
+  link(h, f, 'reintentar', { color: 'amber' });
+
+  // ----- Línea de tiempo: las 8 medallas de Kanto -----
+  const tl = { id: uid(), x: 240, y: 1060 };
+  d.timelines.push(tl);
+  const hito = (title, subtitle, color, rows, side) => {
+    const n = { id: uid(), x: 0, y: 0, tl: tl.id, title, subtitle, color, rows: rows || [] };
+    if (side) n.side = side;
+    d.nodes.push(n);
+    return n;
+  };
+  hito('Roca', 'Brock · Plateada', 'slate', [
+    ['**tipo**', '`Roca`'],
+    ['**premio**', 'MT Avalancha'],
+  ]);
+  hito('Cascada', 'Misty · Celeste', 'blue');
+  hito('Trueno', 'Lt. Surge · Carmín', 'amber');
+  hito('Arcoíris', 'Erika · Azulona', 'magenta');
+  hito('Alma', 'Sabrina · Azafrán', 'plum', [], 'up');
+  hito('Volcán', 'Blaine · Canela', 'rust');
+  hito('Tierra', 'Giovanni · Verde', 'forest');
+  d.nodes[d.nodes.length - 1].note = 'Giovanni es el líder secreto del Team Rocket.';
   return d;
 }
 
