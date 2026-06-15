@@ -1577,7 +1577,10 @@ $('#docDelete').addEventListener('click', () => {
 
 /* ============================== interacción ============================== */
 
-let mode = null; // pan | drag | connect
+let mode = null; // pan | drag | connect | pinch
+// punteros activos por id (para pinch-to-zoom y desplazamiento con dos dedos)
+const pointers = new Map();
+let gesturePointerId = null; // dedo que dirige el gesto de un solo puntero
 
 function screenToWorld(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -1618,6 +1621,24 @@ function applyAlignGuides(n, nx, ny, skipIds) {
 canvas.addEventListener('pointerdown', (ev) => {
   if (ev.button !== 0 && ev.button !== 1) return;
   try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* eventos sintéticos */ }
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  // dos dedos: entrar en pinch (zoom + desplazamiento) si no hay otro gesto en curso
+  if (pointers.size >= 2) {
+    if (!mode || mode.type === 'pan' || mode.type === 'pinch') {
+      const [a, b] = [...pointers.values()];
+      mode = {
+        type: 'pinch',
+        d0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2,
+        z0: view().z, vx0: view().x, vy0: view().y,
+      };
+      canvas.classList.remove('panning', 'connecting');
+      draftG.innerHTML = '';
+      guides = { x: null, y: null };
+    }
+    return;
+  }
+  gesturePointerId = ev.pointerId; // este dedo dirige el gesto de un puntero
   const portEl = ev.target.closest && ev.target.classList.contains('port') ? ev.target : null;
   const nodeG = ev.target.closest ? ev.target.closest('g.node') : null;
   let edgeId = null;
@@ -1713,6 +1734,27 @@ canvas.addEventListener('pointerdown', (ev) => {
 });
 
 canvas.addEventListener('pointermove', (ev) => {
+  if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (mode && mode.type === 'pinch') {
+    if (pointers.size < 2) return;
+    const [a, b] = [...pointers.values()];
+    const rect = canvas.getBoundingClientRect();
+    const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const z2 = clamp(mode.z0 * (d / mode.d0), 0.2, 3);
+    const mcx = (a.x + b.x) / 2, mcy = (a.y + b.y) / 2;
+    // ancla: el punto del mundo bajo el centro inicial sigue al centro actual
+    const wx = (mode.cx - rect.left - mode.vx0) / mode.z0;
+    const wy = (mode.cy - rect.top - mode.vy0) / mode.z0;
+    const v = view();
+    v.z = z2;
+    v.x = (mcx - rect.left) - wx * z2;
+    v.y = (mcy - rect.top) - wy * z2;
+    applyViewTransform();
+    saveStore();
+    return;
+  }
+  // en gestos de un puntero, solo el dedo que los inició los mueve
+  if (mode && ev.pointerId !== gesturePointerId) return;
   if (!mode) {
     updateGroupHover(ev);
     return;
@@ -1837,6 +1879,21 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 
 canvas.addEventListener('pointerup', (ev) => {
+  pointers.delete(ev.pointerId);
+  if (mode && mode.type === 'pinch') {
+    // al levantar un dedo, el que queda retoma el desplazamiento
+    if (pointers.size === 1) {
+      const [id] = [...pointers.keys()];
+      const p = pointers.get(id);
+      gesturePointerId = id;
+      mode = { type: 'pan', startX: p.x, startY: p.y, ox: view().x, oy: view().y };
+    } else {
+      mode = null;
+    }
+    return;
+  }
+  // solo el dedo que inició el gesto lo completa (ignora toques secundarios)
+  if (ev.pointerId !== gesturePointerId) return;
   if (!mode) return;
   let newEdgeId = null;
   if (mode.type === 'drag' && mode.moved) commit();
@@ -1893,6 +1950,12 @@ canvas.addEventListener('pointerleave', () => {
     hoverGroupKey = null;
     renderGroupHover();
   }
+});
+
+canvas.addEventListener('pointercancel', (ev) => {
+  pointers.delete(ev.pointerId);
+  if (mode && mode.type === 'pinch' && pointers.size < 2) mode = null;
+  canvas.classList.remove('panning', 'connecting');
 });
 
 canvas.addEventListener('dblclick', (ev) => {

@@ -18,6 +18,7 @@ Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subt
 - **Compartir**: copia un enlace con el diagrama completo comprimido en la URL (sin servidor); al abrirlo se importa como diagrama nuevo.
 - **Arrastrar un nodo**: moverlo; aparecen guías rosas cuando queda alineado con otro nodo (bordes o centros).
 - **Rueda**: desplazar el lienzo · **⌘/Ctrl + rueda**: zoom · arrastrar el fondo también desplaza.
+- **Táctil / móvil**: un dedo arrastra (nodos, hitos, ejes o el lienzo) y **dos dedos hacen zoom y desplazan** (pellizco). La barra superior se desliza en horizontal para alcanzar todos los botones y el panel de edición aparece como hoja inferior.
 - **⌫** borrar selección · **⌘Z / ⌘⇧Z** deshacer y rehacer · **flechas** mover los nodos seleccionados (⇧ = pasos de 10).
 - **SVG / PNG** en la barra superior: descarga el canvas recortado al contenido, con fondo blanco (PNG a 2×). **Con nodos seleccionados se exporta solo esa parte** (con sus flechas internas; un hito seleccionado arrastra su línea de tiempo completa) — ideal cuando conviven varios diagramas en el mismo canvas.
 - **Grupos**: todo lo que está unido (nodos conectados por flechas, o una línea de tiempo) es un grupo. Al **pasar el cursor** sobre cualquier elemento aparece un rectángulo punteado alrededor del grupo completo, con un menú **SVG · PNG · JSON** para exportar solo ese grupo; el rectángulo desaparece al salir.

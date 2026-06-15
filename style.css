@@ -386,3 +386,48 @@ body.dark .swatch.active { box-shadow: 0 0 0 2px #26262b inset; }
   user-select: none;
   pointer-events: none;
 }
+
+/* ---------- móvil / pantallas angostas ---------- */
+
+@media (max-width: 760px) {
+  /* la barra se desplaza en horizontal para que todos los botones sigan
+     siendo alcanzables, en lugar de desbordarse y quedar cortados */
+  .topbar {
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar::-webkit-scrollbar { display: none; }
+  .topbar-left, .topbar-right { flex: 0 0 auto; gap: 6px; }
+  .logo { display: none; }
+  #docSelect { max-width: 130px; }
+  #docName { width: 120px; }
+
+  /* objetivos táctiles más cómodos */
+  .btn { padding: 8px 12px; }
+  .icon-btn { width: 32px; height: 32px; }
+
+  /* el panel pasa a ser una hoja inferior en vez de tapar el contenido */
+  #panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 48vh;
+    border-radius: 14px 14px 0 0;
+    border-bottom: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  /* el zoombar sube para no chocar con la hoja inferior */
+  #zoombar { bottom: auto; top: 60px; right: 10px; }
+
+  /* el texto de atajos es de teclado/ratón: no aplica en táctil */
+  #hint { display: none; }
+}
