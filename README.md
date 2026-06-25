@@ -4,7 +4,7 @@
 
 # Cartógrafo
 
-Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subtítulo y tablas opcionales), flechas que se acomodan solas y exportación a SVG/PNG. También crea **líneas de tiempo** con las mismas tarjetas sobre un eje. Sin dependencias ni build: abre `index.html` en el navegador. En producción vive en [cartografo.com.mx](https://cartografo.com.mx).
+Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subtítulo y tablas opcionales), flechas que se acomodan solas y exportación a SVG/PNG. También crea **líneas de tiempo** con las mismas tarjetas sobre un eje. El front no tiene dependencias ni build: abre `index.html` en el navegador. El **inicio de sesión es opcional** y sincroniza tus diagramas en la nube (ver [Cuentas y sincronización](#cuentas-y-sincronización)). En producción vive en [cartografo.com.mx](https://cartografo.com.mx).
 
 ## Uso
 
@@ -40,6 +40,25 @@ Editor minimalista de diagramas de flujo con nodos estilo tarjeta (título, subt
 - A los hitos los coloca su eje, así que "Ordenar" y alinear/distribuir no les aplican; borrar todos los hitos elimina el eje. Todo lo demás (edición inline, colores, notas, puertos, deshacer, exportar, compartir) funciona igual que en cualquier tarjeta.
 
 Los documentos guardados con el formato anterior (tipo "timeline") se migran solos al abrir la app.
+
+## Cuentas y sincronización
+
+El acceso es **opcional y no restringe nada**: sin sesión la app funciona igual que siempre, guardando todo en `localStorage`. El botón **Iniciar sesión** (arriba a la derecha) abre un panel para crear cuenta o entrar con correo y contraseña.
+
+Al iniciar sesión:
+
+- Tus diagramas se **sincronizan en la nube** y aparecen en cualquier dispositivo donde entres con la misma cuenta.
+- Al entrar se **fusionan** los diagramas locales con los de la nube: si un mismo diagrama existe en ambos lados, gana la versión editada más recientemente. Los diagramas que creaste sin sesión se suben automáticamente.
+- Cada cambio se guarda solo (con un pequeño retraso) mientras editas; el menú de la cuenta muestra el estado (`Sincronizando…` / `Sincronizado` / `Sin conexión`).
+- **Cerrar sesión** no borra nada local: los diagramas siguen disponibles sin conexión.
+
+### Backend
+
+La sincronización la sirve un backend propio en [`server/`](server/) — un servicio en Go (chi + GORM + JWT) sobre **PostgreSQL**, con el mismo patrón de migraciones por `AutoMigrate` que el resto de los proyectos. El esquema (usuarios y diagramas) se crea solo al arrancar.
+
+Endpoints bajo `/api/v1`: `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, y `GET|PUT|DELETE /diagrams[/{id}]`. En producción, nginx hace de proxy inverso de `/api/` al contenedor `api`, así que el front y su API comparten un mismo origen (sin CORS, `fetch('/api/…')` directo).
+
+Para levantarlo todo (front + API + Postgres + túnel) basta `docker compose up`; copia `.env.example` a `.env` y define al menos `JWT_SECRET` (`openssl rand -hex 32`). Para cerrar el registro público sin afectar el login, usa `DISABLE_REGISTRATION=true`.
 
 ## Marca
 

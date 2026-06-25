@@ -432,3 +432,202 @@ body.dark .swatch.active { box-shadow: 0 0 0 2px #26262b inset; }
   /* el texto de atajos es de teclado/ratón: no aplica en táctil */
   #hint { display: none; }
 }
+
+/* ---------- cuentas (login opcional) ---------- */
+
+#authBtn.signed-in {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu {
+  position: fixed;
+  top: 52px;
+  right: 12px;
+  z-index: 60;
+  width: 220px;
+  padding: 12px;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.account-email {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 14px;
+}
+.account-menu .btn { width: 100%; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 20, 22, 0.42);
+  backdrop-filter: blur(2px);
+  padding: 20px;
+}
+.modal-card {
+  position: relative;
+  width: 100%;
+  max-width: 340px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  padding: 24px 22px 22px;
+}
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.modal-close:hover { background: var(--border); color: var(--text); }
+
+.auth-head strong { font-size: 16px; color: var(--text); }
+.auth-sub {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 14px;
+  padding: 3px;
+  background: var(--border);
+  border-radius: 9px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 7px 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font: 13px var(--font);
+  cursor: pointer;
+}
+.auth-tab.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.auth-field span { font-size: 12px; color: var(--text-dim); }
+.auth-field input {
+  padding: 9px 10px;
+  font: 14px var(--font);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+}
+.auth-field input:focus { border-color: var(--accent); }
+
+.auth-error {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--danger);
+  background: rgba(194, 64, 42, 0.08);
+  border-radius: 8px;
+}
+#authSubmit { width: 100%; margin-top: 2px; }
+
+body.dark .auth-field input { background: #26262b; border-color: #3a3a41; }
+body.dark .modal-close:hover { background: #303036; }
+
+@media (max-width: 640px) {
+  .account-menu { right: 8px; top: 56px; }
+}
+
+/* ---------- aviso de sesión expirada ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 11px 12px 11px 16px;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
+  animation: toast-in 0.22s ease;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.toast-msg {
+  font-size: 13px;
+  color: var(--text);
+}
+.toast .btn { flex-shrink: 0; }
+.toast-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.toast-close:hover { background: var(--border); color: var(--text); }
+
+@media (max-width: 640px) {
+  .toast {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    transform: none;
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+}

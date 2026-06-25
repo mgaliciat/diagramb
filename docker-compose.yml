@@ -1,7 +1,49 @@
 services:
+  # PostgreSQL — stores accounts and cloud-synced diagrams. Bound to loopback
+  # on a non-default host port (5434) so it coexists with any other local
+  # Postgres without ever being reachable from outside the host.
+  db:
+    image: postgres:18-alpine
+    container_name: cartografo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rootpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-cartografo_db}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      # Postgres 18+ keeps data in a version-specific subdir, so the mount point
+      # is the parent of the data dir, not the data dir itself.
+      - cartografo-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-cartografo_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Go API — auth + diagram sync. Reached only through the nginx reverse proxy
+  # (http://api:8080 on the compose network); no host port is published.
+  api:
+    build: ./server
+    container_name: cartografo-api
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DATABASE_URL: "host=db user=${POSTGRES_USER:-root} password=${POSTGRES_PASSWORD:-rootpassword} dbname=${POSTGRES_DB:-cartografo_db} port=5432 sslmode=disable TimeZone=America/Mexico_City"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET must be set, generate with openssl rand -hex 32}"
+      JWT_TTL: ${JWT_TTL:-720h}
+      DISABLE_REGISTRATION: ${DISABLE_REGISTRATION:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+
   app:
     build: .
     restart: unless-stopped
+    depends_on:
+      - api
 
   tunnel:
     image: cloudflare/cloudflared:latest
@@ -11,3 +53,6 @@ services:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN}
     depends_on:
       - app
+
+volumes:
+  cartografo-pgdata:

@@ -292,8 +292,212 @@ function saveStore() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    cloud.schedulePush(store.current);
   }, 150);
 }
+
+/* ============================== cuentas + sync en la nube ============================== */
+//
+// El acceso es siempre opcional: sin sesión la app funciona exactamente igual
+// que antes, guardando todo en localStorage. Al iniciar sesión, cada diagrama
+// se sincroniza con el backend (PUT /api/v1/diagrams/{id}) y al entrar se
+// fusionan los diagramas de la nube con los locales (gana el más reciente).
+
+const AUTH_KEY = 'diagramb.auth';
+
+// Firma de contenido de un diagrama. Ignora `updatedAt` (la marca de tiempo no
+// debe dispararse a sí misma) y `view` (la cámara es local: mover/zoom no debe
+// provocar sincronización). El payload sí incluye ambos al subir.
+function docSig(d) {
+  const c = { ...d };
+  delete c.updatedAt;
+  delete c.view;
+  return JSON.stringify(c);
+}
+
+const cloud = {
+  base: '/api/v1',
+  token: null,
+  user: null,
+  pushTimers: {},
+  lastSig: {},
+  status: 'idle',
+
+  headers() {
+    const h = { 'Content-Type': 'application/json' };
+    if (this.token) h.Authorization = 'Bearer ' + this.token;
+    return h;
+  },
+
+  loadSession() {
+    try {
+      const a = JSON.parse(localStorage.getItem(AUTH_KEY));
+      if (a && a.token) { this.token = a.token; this.user = a.user || null; }
+    } catch (_) { /* sesión corrupta: se ignora */ }
+  },
+  saveSession() {
+    localStorage.setItem(AUTH_KEY, JSON.stringify({ token: this.token, user: this.user }));
+  },
+  clearSession() {
+    localStorage.removeItem(AUTH_KEY);
+    this.token = null;
+    this.user = null;
+  },
+
+  // Restaura la sesión al arrancar: valida el token y descarga los diagramas.
+  async init() {
+    this.loadSession();
+    updateAuthUI();
+    if (!this.token) return;
+    try {
+      const res = await fetch(this.base + '/auth/me', { headers: this.headers() });
+      if (res.status === 401) { this.handle401(); return; }
+      if (!res.ok) { this.setStatus('offline'); return; }
+      this.user = await res.json();
+      this.saveSession();
+      updateAuthUI();
+      await this.pullAll();
+    } catch (_) { this.setStatus('offline'); }
+  },
+
+  async authRequest(path, body) {
+    const res = await fetch(this.base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'No se pudo completar la solicitud');
+    this.token = data.token;
+    this.user = data.user;
+    this.saveSession();
+    updateAuthUI();
+    await this.pullAll();
+    return data;
+  },
+  login(email, password) { return this.authRequest('/auth/login', { email, password }); },
+  register(name, email, password) { return this.authRequest('/auth/register', { name, email, password }); },
+
+  logout() {
+    this.clearSession();
+    this.pushTimers = {};
+    this.lastSig = {};
+    this.setStatus('idle');
+    updateAuthUI();
+  },
+
+  handle401() {
+    // Token expirado o inválido: se cierra la sesión sin tocar los diagramas
+    // locales, que siguen disponibles sin conexión. A diferencia de cerrar
+    // sesión a propósito, aquí avisamos al usuario para que vuelva a entrar.
+    this.clearSession();
+    this.setStatus('idle');
+    updateAuthUI();
+    showSessionExpired();
+  },
+
+  setStatus(s) {
+    this.status = s;
+    const elS = $('#syncStatus');
+    if (!elS) return;
+    elS.textContent = ({
+      syncing: 'Sincronizando…',
+      synced: 'Sincronizado',
+      offline: 'Sin conexión',
+      idle: '',
+    })[s] || '';
+  },
+
+  // Descarga todos los diagramas del usuario y los fusiona con los locales.
+  async pullAll() {
+    if (!this.token) return;
+    this.setStatus('syncing');
+    let rows;
+    try {
+      const res = await fetch(this.base + '/diagrams', { headers: this.headers() });
+      if (res.status === 401) { this.handle401(); return; }
+      if (!res.ok) throw new Error('list');
+      rows = await res.json();
+    } catch (_) { this.setStatus('offline'); return; }
+
+    let changed = false;
+    const cloudIds = new Set();
+    for (const row of rows) {
+      const cloudDoc = row.payload;
+      if (!cloudDoc || typeof cloudDoc !== 'object') continue;
+      cloudIds.add(row.id);
+      cloudDoc.id = row.id;
+      cloudDoc.updatedAt = row.client_updated_at || 0;
+      normalizeDoc(cloudDoc);
+      const local = store.docs[row.id];
+      const localTs = local ? (local.updatedAt || 0) : -1;
+      if (!local || (cloudDoc.updatedAt >= localTs)) {
+        store.docs[row.id] = cloudDoc;
+        this.lastSig[row.id] = docSig(cloudDoc);
+        changed = true;
+      }
+    }
+    // Diagramas creados sin sesión: súbelos a la nube.
+    for (const id of Object.keys(store.docs)) {
+      if (!cloudIds.has(id)) this.schedulePush(id);
+    }
+    if (!store.docs[store.current]) {
+      store.current = Object.keys(store.docs)[0];
+      changed = true;
+    }
+    if (changed) {
+      saveStore();
+      selection = null;
+      panelFor = null;
+      resetHistory();
+      syncDocBar();
+      renderAll();
+    }
+    this.setStatus('synced');
+  },
+
+  schedulePush(docId) {
+    if (!this.token) return;
+    const d = store.docs[docId];
+    if (!d) return;
+    const sig = docSig(d);
+    if (this.lastSig[docId] === sig) return; // sin cambios reales
+    this.lastSig[docId] = sig;
+    clearTimeout(this.pushTimers[docId]);
+    this.pushTimers[docId] = setTimeout(() => this.pushDoc(docId), 800);
+  },
+
+  async pushDoc(docId) {
+    const d = store.docs[docId];
+    if (!d || !this.token) return;
+    this.setStatus('syncing');
+    const ts = Date.now();
+    d.updatedAt = ts;
+    try {
+      const res = await fetch(this.base + '/diagrams/' + encodeURIComponent(docId), {
+        method: 'PUT',
+        headers: this.headers(),
+        body: JSON.stringify({ name: d.name || 'Sin nombre', payload: d, client_updated_at: ts }),
+      });
+      if (res.status === 401) { this.handle401(); return; }
+      if (!res.ok) throw new Error('push');
+      this.setStatus('synced');
+    } catch (_) { this.setStatus('offline'); }
+  },
+
+  async deleteDoc(docId) {
+    delete this.lastSig[docId];
+    clearTimeout(this.pushTimers[docId]);
+    if (!this.token) return;
+    try {
+      const res = await fetch(this.base + '/diagrams/' + encodeURIComponent(docId), {
+        method: 'DELETE',
+        headers: this.headers(),
+      });
+      if (res.status === 401) { this.handle401(); return; }
+    } catch (_) { /* se reintenta en el próximo arranque vía fusión */ }
+  },
+};
 
 /* ============================== historial (deshacer) ============================== */
 
@@ -983,7 +1187,7 @@ function renderGroupHover() {
     'stroke-width': 1.4, 'stroke-dasharray': '6 5', 'pointer-events': 'none',
   }, hoverG);
   // menú de exportación montado sobre la esquina superior derecha
-  const items = [['svg', 'SVG', 42], ['png', 'PNG', 42], ['json', 'JSON', 50]];
+  const items = [['svg', 'SVG', 42], ['png', 'PNG', 42], ['json', 'JSON', 50], ['md', 'MD', 38]];
   const bh = 22;
   let bx = x + w;
   for (let i = items.length - 1; i >= 0; i--) {
@@ -1559,7 +1763,9 @@ $('#docNew').addEventListener('click', () => {
 
 $('#docDelete').addEventListener('click', () => {
   if (!confirm(`¿Eliminar “${doc().name}”? Esta acción no se puede deshacer.`)) return;
+  const deletedId = store.current;
   delete store.docs[store.current];
+  cloud.deleteDoc(deletedId);
   const remaining = Object.keys(store.docs);
   if (!remaining.length) {
     const d = newDoc('Diagrama 1');
@@ -1573,6 +1779,113 @@ $('#docDelete').addEventListener('click', () => {
   resetHistory();
   saveStore();
   renderAll();
+});
+
+/* ============================== UI de cuentas ============================== */
+
+let authMode = 'login';
+
+function updateAuthUI() {
+  const btn = $('#authBtn');
+  if (!btn) return;
+  if (cloud.user) {
+    const label = cloud.user.name && cloud.user.name !== cloud.user.email
+      ? cloud.user.name
+      : cloud.user.email;
+    btn.textContent = label;
+    btn.classList.add('signed-in');
+    btn.title = 'Cuenta: ' + cloud.user.email;
+    const em = $('#accountEmail');
+    if (em) em.textContent = cloud.user.email;
+    hideSessionExpired(); // si veníamos de un aviso de expiración, ya entró
+  } else {
+    btn.textContent = 'Iniciar sesión';
+    btn.classList.remove('signed-in');
+    btn.title = 'Iniciar sesión (opcional)';
+    $('#accountMenu').hidden = true;
+  }
+}
+
+function showSessionExpired() { $('#sessionToast').hidden = false; }
+function hideSessionExpired() { $('#sessionToast').hidden = true; }
+
+function openAuthModal() {
+  setAuthMode('login');
+  $('#authError').hidden = true;
+  $('#authForm').reset();
+  $('#authModal').hidden = false;
+  $('#authEmail').focus();
+}
+function closeAuthModal() { $('#authModal').hidden = true; }
+
+function setAuthMode(m) {
+  authMode = m;
+  for (const tab of document.querySelectorAll('.auth-tab')) {
+    tab.classList.toggle('active', tab.dataset.mode === m);
+  }
+  $('#authNameField').hidden = m !== 'register';
+  $('#authSubmit').textContent = m === 'register' ? 'Crear cuenta' : 'Entrar';
+  $('#authPassword').setAttribute('autocomplete', m === 'register' ? 'new-password' : 'current-password');
+  $('#authError').hidden = true;
+}
+
+$('#authBtn').addEventListener('click', () => {
+  if (cloud.user) {
+    $('#accountMenu').hidden = !$('#accountMenu').hidden;
+  } else {
+    openAuthModal();
+  }
+});
+
+$('#authClose').addEventListener('click', closeAuthModal);
+$('#authModal').addEventListener('click', (ev) => {
+  if (ev.target === $('#authModal')) closeAuthModal();
+});
+
+for (const tab of document.querySelectorAll('.auth-tab')) {
+  tab.addEventListener('click', () => setAuthMode(tab.dataset.mode));
+}
+
+$('#authForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const name = $('#authName').value.trim();
+  const email = $('#authEmail').value.trim();
+  const password = $('#authPassword').value;
+  const err = $('#authError');
+  const submit = $('#authSubmit');
+  err.hidden = true;
+  submit.disabled = true;
+  const prev = submit.textContent;
+  submit.textContent = '…';
+  try {
+    if (authMode === 'register') await cloud.register(name, email, password);
+    else await cloud.login(email, password);
+    closeAuthModal();
+  } catch (e) {
+    err.textContent = e.message || 'Error';
+    err.hidden = false;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = prev;
+  }
+});
+
+$('#logoutBtn').addEventListener('click', () => {
+  cloud.logout();
+  $('#accountMenu').hidden = true;
+});
+
+$('#sessionToastLogin').addEventListener('click', () => {
+  hideSessionExpired();
+  openAuthModal();
+});
+$('#sessionToastClose').addEventListener('click', hideSessionExpired);
+
+// Cerrar el menú de cuenta al hacer clic fuera.
+document.addEventListener('click', (ev) => {
+  const menu = $('#accountMenu');
+  if (menu.hidden) return;
+  if (!menu.contains(ev.target) && ev.target !== $('#authBtn')) menu.hidden = true;
 });
 
 /* ============================== interacción ============================== */
@@ -2775,6 +3088,79 @@ function downloadJsonExport(ids) {
   downloadBlob(new Blob([data], { type: 'application/json' }), fileSlug() + '.json');
 }
 
+// Markdown legible pensado para pegar como contexto en una IA: nodos con su
+// tabla y nota, las líneas de tiempo en orden y la lista de conexiones.
+function downloadMdExport(ids) {
+  const d = doc();
+  const nodes = d.nodes.filter((n) => !ids || ids.has(n.id));
+  if (!nodes.length) { alert('El diagrama está vacío.'); return; }
+  const inc = new Set(nodes.map((n) => n.id));
+  const edges = d.edges.filter((e) => inc.has(e.from) && inc.has(e.to));
+  const timelines = d.timelines.filter((t) => nodes.some((n) => n.tl === t.id));
+
+  const oneLine = (s) => String(s == null ? '' : s).replace(/\s*\n\s*/g, ' ').trim();
+  const cell = (s) => oneLine(s).replace(/\|/g, '\\|');
+  const titleOf = (id) => {
+    const n = nodes.find((x) => x.id === id);
+    return oneLine(n ? n.title : '') || 'sin título';
+  };
+
+  // Las celdas ya pueden traer markdown (**negrita**, `código`): se respeta.
+  const renderTable = (rows, indent) => {
+    let s = '';
+    const [head, ...rest] = rows;
+    s += `${indent}| ${cell(head[0])} | ${cell(head[1])} |\n`;
+    s += `${indent}| --- | --- |\n`;
+    for (const r of rest) s += `${indent}| ${cell(r[0])} | ${cell(r[1])} |\n`;
+    return s;
+  };
+
+  let md = `# ${oneLine(d.name) || 'Diagrama'}\n\n`;
+
+  const freeNodes = nodes.filter((n) => !n.tl);
+  if (freeNodes.length) {
+    md += '## Nodos\n\n';
+    for (const n of freeNodes) {
+      md += `### ${oneLine(n.title) || 'Sin título'}\n\n`;
+      if (n.subtitle) md += `*${oneLine(n.subtitle)}*\n\n`;
+      if (n.rows && n.rows.length) md += renderTable(n.rows, '') + '\n';
+      if (n.note) md += `> ${oneLine(n.note)}\n\n`;
+    }
+  }
+
+  timelines.forEach((tl, ti) => {
+    const members = nodes.filter((n) => n.tl === tl.id); // orden = orden en el eje
+    if (!members.length) return;
+    md += timelines.length > 1 ? `## Línea de tiempo ${ti + 1}\n\n` : '## Línea de tiempo\n\n';
+    members.forEach((n, i) => {
+      md += `${i + 1}. **${oneLine(n.title) || 'Sin título'}**`;
+      if (n.subtitle) md += ` — ${oneLine(n.subtitle)}`;
+      md += '\n';
+      if (n.note) md += `   > ${oneLine(n.note)}\n`;
+      if (n.rows && n.rows.length) {
+        for (const r of n.rows) md += `   - ${oneLine(r[0])}: ${oneLine(r[1])}\n`;
+      }
+    });
+    md += '\n';
+  });
+
+  if (edges.length) {
+    md += '## Conexiones\n\n';
+    for (const e of edges) {
+      const arrow = e.both ? '↔' : '→';
+      let line = `- **${titleOf(e.from)}** ${arrow} **${titleOf(e.to)}**`;
+      const extra = [];
+      if (e.label) extra.push(oneLine(e.label));
+      if (e.dashed) extra.push('punteada');
+      if (extra.length) line += `: ${extra.join(' · ')}`;
+      md += line + '\n';
+    }
+    md += '\n';
+  }
+
+  downloadBlob(new Blob([md], { type: 'text/markdown' }), fileSlug() + '.md');
+}
+
 // Exportación desde el menú del rect de grupo.
 function exportGroup(fmt, key) {
   const g = groupList.find((gr) => gr.key === key);
@@ -2782,11 +3168,13 @@ function exportGroup(fmt, key) {
   if (fmt === 'svg') downloadSvgExport(g.ids);
   else if (fmt === 'png') downloadPngExport(g.ids);
   else if (fmt === 'json') downloadJsonExport(g.ids);
+  else if (fmt === 'md') downloadMdExport(g.ids);
 }
 
 $('#exportSvg').addEventListener('click', () => downloadSvgExport(exportSelectionIds()));
 $('#exportPng').addEventListener('click', () => downloadPngExport(exportSelectionIds()));
 $('#exportJson').addEventListener('click', () => downloadJsonExport(null));
+$('#exportMd').addEventListener('click', () => downloadMdExport(exportSelectionIds()));
 
 $('#importJson').addEventListener('click', () => $('#importFile').click());
 
@@ -2837,6 +3225,7 @@ applyTheme();
 resetHistory();
 renderAll();
 handleShareHash();
+cloud.init();
 window.addEventListener('resize', renderGuides);
 
 // API mínima para depuración y pruebas automatizadas

@@ -51,8 +51,15 @@
     <input id="importFile" type="file" accept="application/json,.json" hidden>
     <button id="shareBtn" class="btn">Compartir</button>
     <button id="themeToggle" class="icon-btn" title="Tema claro/oscuro">🌙</button>
+    <button id="authBtn" class="btn" title="Iniciar sesión (opcional)">Iniciar sesión</button>
   </div>
 </header>
+
+<div id="accountMenu" class="account-menu" hidden>
+  <div id="accountEmail" class="account-email"></div>
+  <div id="syncStatus" class="account-status"></div>
+  <button id="logoutBtn" class="btn tiny">Cerrar sesión</button>
+</div>
 
 <div id="canvasWrap">
   <svg id="canvas">
@@ -129,6 +136,33 @@
 </div>
 
 <div id="hint">doble clic: nuevo nodo / editar texto · doble clic en un eje: nuevo hito · puerto azul: conectar · ⇧+arrastre: selección múltiple · ⌫ borrar · ⌘Z deshacer · ⌘+rueda: zoom</div>
+
+<div id="authModal" class="modal" hidden>
+  <div class="modal-card">
+    <button id="authClose" class="modal-close" title="Cerrar">✕</button>
+    <div class="auth-head">
+      <strong>Cuenta de Cartógrafo</strong>
+      <p class="auth-sub">Inicia sesión para sincronizar tus diagramas entre dispositivos. Es opcional: sin sesión todo se guarda en este navegador.</p>
+    </div>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-mode="login">Entrar</button>
+      <button type="button" class="auth-tab" data-mode="register">Crear cuenta</button>
+    </div>
+    <form id="authForm" autocomplete="on">
+      <label class="auth-field" id="authNameField" hidden><span>Nombre</span><input id="authName" type="text" autocomplete="name"></label>
+      <label class="auth-field"><span>Correo</span><input id="authEmail" type="email" autocomplete="email" required></label>
+      <label class="auth-field"><span>Contraseña</span><input id="authPassword" type="password" autocomplete="current-password" minlength="8" required></label>
+      <div id="authError" class="auth-error" hidden></div>
+      <button id="authSubmit" type="submit" class="btn primary">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<div id="sessionToast" class="toast" hidden>
+  <span class="toast-msg">Tu sesión expiró. Vuelve a entrar para seguir sincronizando.</span>
+  <button id="sessionToastLogin" class="btn tiny">Entrar</button>
+  <button id="sessionToastClose" class="toast-close" title="Cerrar">✕</button>
+</div>
 
 <script src="app.js"></script>
 </body>
